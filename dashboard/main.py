@@ -91,3 +91,96 @@ async def start_verify(req: VerifyRequest):
     }
     return {"session_id": session_id}
 
+
+@app.websocket("/ws/{session_id}")
+async def ws_verify(websocket: WebSocket, session_id: str):
+    await websocket.accept()
+
+    if session_id not in _sessions:
+        await websocket.send_json({"event": "error", "detail": "Unknown session."})
+        await websocket.close()
+        return
+
+    mode = _sessions[session_id]["mode"]
+    cfg  = _sessions[session_id].get("cfg")
+    if cfg:
+        _simulator.configure(cfg)
+    else:
+        _simulator.set_mode(mode)
+    _sessions[session_id]["status"] = "running"
+
+    all_results = {}
+    final_verdict = None
+
+    try:
+        async for event in run_verification(_simulator, session_id):
+            await websocket.send_json(event)
+            await asyncio.sleep(0)   # yield to event loop
+
+            if event["event"] == "check_done":
+                # Collect result objects for report generation
+                pass
+
+            if event["event"] == "verdict":
+                final_verdict = event
+
+        # Generate evidence report
+        if final_verdict:
+            # Re-run a lightweight pass to get result objects for report
+            # (orchestrator yields events but we need the actual CheckResult objects)
+            from checks.identity.identity_check   import run as ci
+            from checks.integrity.integrity_check import run as cint
+            from checks.weaknesses.weakness_check import run as cw
+            from checks.behavior.behavior_check   import run as cb
+            from checks.identity.identity_check   import CheckResult
+
+            # Run all checks again synchronously for report (cached results)
+            loop = asyncio.get_event_loop()
+            r_identity  = await ci(_simulator)
+            r_integrity = await cint(_simulator)
+            r_weakness  = await cw(_simulator)
+            r_behavior  = await cb(_simulator)
+
+            results_map = {
+                "identity":   r_identity,
+                "integrity":  r_integrity,
+                "weaknesses": r_weakness,
+                "behavior":   r_behavior,
+            }
+
+            fw_info = _simulator.get_firmware_info()
+            report  = generate_report(
+                session_id   = session_id,
+                verdict      = final_verdict["verdict"],
+                reason       = final_verdict["reason"],
+                score        = final_verdict["score"],
+                results      = results_map,
+                charger_mode = mode,
+            )
+
+            save_run(
+                session_id    = session_id,
+                charger_mode  = mode,
+                device_id     = _simulator.device_id,
+                firmware_hash = fw_info["hash"],
+                verdict       = final_verdict["verdict"],
+                results       = final_verdict.get("results", {}),
+                report_path   = str(EVIDENCE_DIR / f"{session_id}.json"),
+            )
+
+            _sessions[session_id]["status"]      = "done"
+            _sessions[session_id]["report_path"] = str(EVIDENCE_DIR / f"{session_id}.json")
+
+            await websocket.send_json({
+                "event":      "report_ready",
+                "session_id": session_id,
+                "download":   f"/api/report/{session_id}",
+            })
+
+    except WebSocketDisconnect:
+        _sessions[session_id]["status"] = "disconnected"
+    except Exception as exc:
+        await websocket.send_json({"event": "error", "detail": str(exc)})
+    finally:
+        await websocket.close()
+
