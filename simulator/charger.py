@@ -118,3 +118,41 @@ class ChargerSimulator:
                 "sig_hex": sig_hex,
             }
 
+    # ── CVE lookup override ───────────────────────────────────────────────
+
+    def get_injected_cves(self) -> list:
+        """
+        Returns manually injected CVE records for supply-chain simulation.
+        Each entry matches the cve_entries table schema.
+        """
+        all_cves = {
+            "CVE-2022-0778": {
+                "cve_id":      "CVE-2022-0778",
+                "severity":    "HIGH",
+                "cvss_score":  7.5,
+                "component":   "openssl/1.1.1k",
+                "description": "OpenSSL infinite loop in BN_mod_sqrt() — allows DoS via crafted certificate.",
+                "fixed_in":    "openssl/1.1.1n",
+                "firmware_hash": "injected",
+            },
+            "CVE-2021-28831": {
+                "cve_id":      "CVE-2021-28831",
+                "severity":    "HIGH",
+                "cvss_score":  7.5,
+                "component":   "busybox/1.33.0",
+                "description": "BusyBox gunzip invalid free — arbitrary code execution via crafted archive.",
+                "fixed_in":    "busybox/1.33.2",
+                "firmware_hash": "injected",
+            },
+            "CVE-2022-37434": {
+                "cve_id":      "CVE-2022-37434",
+                "severity":    "CRITICAL",
+                "cvss_score":  9.8,
+                "component":   "zlib/1.2.11",
+                "description": "zlib heap buffer overflow in inflate() — remote code execution via crafted input.",
+                "fixed_in":    "zlib/1.2.13",
+                "firmware_hash": "injected",
+            },
+        }
+        return [all_cves[c] for c in self.attack.inject_cves if c in all_cves]
+
