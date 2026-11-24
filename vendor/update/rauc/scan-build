@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -ex
+
+meson setup --wipe build-clang-scan
+SCANBUILD=$(pwd)/scan-build-wrapper.sh ninja -C build-clang-scan scan-build

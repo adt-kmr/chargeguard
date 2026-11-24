@@ -1,0 +1,11 @@
+#!/bin/sh
+
+echo RAUC_SYSTEM_SERIAL=1234
+echo RAUC_SYSTEM_VARIANT=test-variant-x
+if [ -n "$RAUC_TEST_SYSTEM_VERSION" ]; then
+    echo RAUC_SYSTEM_VERSION="$RAUC_TEST_SYSTEM_VERSION"
+else
+    echo RAUC_SYSTEM_VERSION=1.0.0
+fi
+echo RAUC_CUSTOM_VARIABLE=test-value
+echo RAUC_TEST_VAR
