@@ -181,7 +181,7 @@ flowchart LR
 | C5 | Orchestrator and trust engine | [`orchestrator/`](orchestrator/orchestrator.py) |
 | C6 | Compliance mapper | [`policy/compliance_map.yaml`](policy/compliance_map.yaml), [`policy/mapper.py`](policy/mapper.py) |
 | C7 | Evidence bundle | [`evidence/`](evidence/report_generator.py) (signed SARIF-structured report), [`integrations/evidence`](integrations/evidence/bundle.py) (SARIF 2.1.0 + CycloneDX + SHA-256 manifest + Cosign) |
-| C8 | Dashboard | [`dashboard/`](dashboard/main.py) (FastAPI + WebSocket, single-page UI with a 3D scene) |
+| C8 | Dashboard | [`dashboard/`](dashboard/main.py) (FastAPI + WebSocket, single-page UI with a three.js scene of a real glTF vehicle model, image-based lighting and live check status) |
 | C9 | Attack and test harness | [`simulator/attacker.py`](simulator/attacker.py), [`integrations/attack_lab`](integrations/attack_lab/scenarios.py) (Renode, IoTGoat, Bruce, Facedancer) |
 | C10 | Charger | [`charger/agent.py`](charger/agent.py): OCPP 1.6-J charge point process (boot, heartbeat, authorise, transaction, meter values, attestation responder); [`simlab/`](simlab/scenarios.py) stages scenarios and simulates the network tap |
 
@@ -452,6 +452,7 @@ db/                SQLite registry: firmware, CVEs, identities, attestation keys
 attestation/       C1 TPM 2.0 attestation: backends, verifiers, emulator launcher
 integrations/      C2–C4, C7, C9 adapters for the vendored security tools
 benchmarks/        Hot-path benchmark and committed results
+scripts/           Asset preparation (dashboard 3D vehicle model)
 tests/             pytest suite
 vendor/            Vendored open-source tools, grouped by capability
 ```
