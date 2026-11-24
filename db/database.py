@@ -70,3 +70,47 @@ def init_db() -> None:
 
 # ── Seed helpers ─────────────────────────────────────────────────────────────
 
+def seed_firmware(entries: list) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    for e in entries:
+        cur.execute("""
+            INSERT OR IGNORE INTO firmware_registry
+            (hash, device_id, version, vendor, build_date, is_signed, is_authentic, pub_key_hex, sig_hex)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (e["hash"], e["device_id"], e["version"], e["vendor"],
+              e["build_date"], e["is_signed"], e["is_authentic"],
+              e.get("pub_key_hex"), e.get("sig_hex")))
+    conn.commit()
+    conn.close()
+
+
+def seed_cves(entries: list) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    for e in entries:
+        cur.execute("""
+            INSERT OR IGNORE INTO cve_entries
+            (firmware_hash, cve_id, severity, cvss_score, component, description, fixed_in)
+            VALUES (?,?,?,?,?,?,?)
+        """, (e["firmware_hash"], e["cve_id"], e["severity"], e["cvss_score"],
+              e["component"], e["description"], e["fixed_in"]))
+    conn.commit()
+    conn.close()
+
+
+def seed_identity(entries: list) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    for e in entries:
+        cur.execute("""
+            INSERT OR IGNORE INTO identity_registry
+            (device_id, pub_key_hex, enrolled_at, charger_model, vendor)
+            VALUES (?,?,?,?,?)
+        """, (e["device_id"], e["pub_key_hex"], e["enrolled_at"],
+              e.get("charger_model"), e.get("vendor")))
+    conn.commit()
+    conn.close()
+
+
+# ── Query helpers ─────────────────────────────────────────────────────────────
