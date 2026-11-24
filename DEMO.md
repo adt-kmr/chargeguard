@@ -33,7 +33,7 @@ The console shows the provisioning steps, then the gateway (`ws://127.0.0.1:9000
 | 1 | Healthy | "A genuine charger is plugged in." | Charger connects over OCPP, four checks tick off, **green 100/100** at 5.0 s, charging starts at about 7.2 kW and energy climbs |
 | 2 | Tampered | "Someone modified the firmware after the vendor signed it." | Identity passes (it is the real device), integrity **fails**, verdict **red**, authorisation for the RFID card is refused |
 | 3 | Vulnerable | "This firmware is genuine, but old." | **Amber 60/100**: 5 real CVEs in OpenSSL 1.1.1k, zlib 1.2.11, BusyBox 1.33.0, max CVSS 9.8; charging allowed with an upgrade recommendation |
-| 4 | Compromised | "A healthy charger is mid-session when it starts scanning the LAN." | Green, charging, then about 8 s in the scan appears in red in the traffic panel, the ring flips to **red 15/100**, status **ISOLATED**, session stopped remotely |
+| 4 | Compromised | "It passes at plug-in — but ChargeGuard keeps watching. Mid-session, the charger starts scanning the LAN." | Green, charging, status **LIVE MONITORING** with a check counter ("Check #8: normal…"). About 9 s in: **THREAT DETECTED MID-SESSION**, ring flips to **red 15/100**, then **CHARGER ISOLATED** with the remote stop and quarantine steps |
 | Close | Open Evidence Report | "Every verdict is signed and mapped to the standards." | Per-check results, CVEs, attestation (payload hash, PCR0, quote), enforcement steps, advisor, **Verify signature** |
 
 The **Custom** preset composes any identity (legitimate, rogue, clone), firmware (good, tampered, vulnerable), behaviour (port scan, C2 beacon, DNS exfiltration, OCPP flood) and timing (at plug-in or mid-session).

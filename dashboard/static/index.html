@@ -83,6 +83,21 @@ header{
 .status-pill.done-green{background:var(--green-l);color:var(--green);border-color:#bbf7d0}
 .status-pill.done-amber{background:var(--amber-l);color:var(--amber);border-color:#fde68a}
 .status-pill.done-red{background:var(--red-l);color:var(--red);border-color:#fecaca}
+.status-pill.monitoring{background:var(--green-l);color:var(--green);border-color:#86efac;
+  box-shadow:0 0 0 3px rgba(22,163,74,.12);animation:monGlow 2s ease-in-out infinite}
+@keyframes monGlow{0%,100%{box-shadow:0 0 0 2px rgba(22,163,74,.10)}50%{box-shadow:0 0 0 6px rgba(22,163,74,.22)}}
+
+/* Live monitoring banner (under the verdict ring) */
+.live-monitor{display:none;margin:.55rem .5rem 0;padding:.45rem .6rem;border-radius:8px;
+  border:1px solid #86efac;background:#f0fdf4;color:#166534;font-size:.68rem;line-height:1.45}
+.live-monitor.on{display:block}
+.live-monitor.alert{border-color:#fecaca;background:var(--red-l);color:var(--red)}
+.live-monitor.ended{border-color:var(--border);background:var(--surface2);color:var(--text2)}
+.live-monitor .lm-head{display:flex;align-items:center;gap:.4rem;font-weight:700;letter-spacing:.02em}
+.live-monitor .lm-dot{width:8px;height:8px;border-radius:50%;background:currentColor;animation:pulse 1.2s ease-in-out infinite}
+.live-monitor.ended .lm-dot{animation:none;opacity:.5}
+.live-monitor .lm-body{margin-top:.2rem}
+.live-monitor .lm-beat{display:inline-block;margin-left:auto;font-family:monospace;font-weight:600}
 .pulse-dot{
   width:7px;height:7px;border-radius:50%;background:currentColor;
   animation:none;
@@ -558,6 +573,11 @@ input[type=range]::-webkit-slider-thumb{
         </div>
         <div class="verdict-text" id="verdictText">
           Configure an attack scenario and press Verify System to begin.
+        </div>
+        <div class="live-monitor" id="liveMonitor">
+          <div class="lm-head"><span class="lm-dot"></span><span id="lmTitle">LIVE MONITORING</span>
+            <span class="lm-beat" id="lmBeat"></span></div>
+          <div class="lm-body" id="lmBody">Behaviour re-checked every second against the charger baseline.</div>
         </div>
       </div>
     </div>
@@ -1353,6 +1373,77 @@ let monitorAlerted = false;
 let lastAdvisory = null;
 const ocppFrames = [];
 
+// ── Live monitoring indicator ───────────────────────────────────────────────
+// Times come from the gateway's event clock (ev.t), so background-tab timer throttling cannot skew them.
+const lm = { state: 'off', t0: 0, checks: 0, last: null };
+
+function lmSet(cls, title, body) {
+  const el = document.getElementById('liveMonitor');
+  el.className = 'live-monitor on' + (cls ? ' ' + cls : '');
+  if(title !== null) document.getElementById('lmTitle').textContent = title;
+  if(body !== null) document.getElementById('lmBody').innerHTML = body;
+}
+
+function lmBeat(t) {
+  document.getElementById('lmBeat').textContent = `${Math.max(0, t - lm.t0).toFixed(0)}s`;
+}
+
+function startLiveMonitor(ev) {
+  if(lm.state === 'watching') return;
+  Object.assign(lm, { state: 'watching', t0: ev.t, checks: 0, last: null });
+  lmSet('', 'LIVE MONITORING', 'Verdict issued — the charger stays under watch. Behaviour is re-checked every second against its baseline.');
+  setStatusPill('monitoring', 'LIVE MONITORING');
+  document.getElementById('pulseDot').className = 'pulse-dot pulsing';
+  lmBeat(ev.t);
+}
+
+function updateLiveMonitor(ev) {
+  if(lm.state !== 'watching') return;
+  lm.checks += 1;
+  lm.last = ev;
+  lmBeat(ev.t);
+  if(ev.status === 'normal') {
+    lmSet('', null, `Check #${lm.checks}: <b>normal</b> · ${ev.records} messages and flows in the last ${ev.window_s}s · ${ev.compute_ms} ms`);
+    document.getElementById('cdet-behavior').textContent =
+      `Live: normal · check #${lm.checks} · ${ev.records} records in ${ev.window_s}s window`;
+  }
+}
+
+function alertLiveMonitor(ev) {
+  if(lm.state === 'off') return;
+  lm.state = 'alert';
+  const rules = (ev.results?.behavior?.evidence?.anomalies || []).map(a => a.rule)
+                .filter((v,i,s)=>s.indexOf(v)===i);
+  const at = Math.max(0, ev.t - lm.t0).toFixed(0);
+  lmBeat(ev.t);                        // freeze the counter at the moment of detection
+  lmSet('alert', 'THREAT DETECTED MID-SESSION',
+    `After ${at}s of normal monitoring (${lm.checks} checks): <b>${esc(rules.join(', ') || 'anomalous behaviour')}</b>. Responding…`);
+}
+
+function enforcementLiveMonitor(ev) {
+  if(lm.state === 'off') return;
+  const steps = (ev.steps || []).map(s => `↳ ${esc(s)}`).join('<br>');
+  lmSet('alert', ev.action === 'isolate' ? 'CHARGER ISOLATED' : 'TRAFFIC BLOCKED', `${esc(ev.detail)}${steps ? '<br>' + steps : ''}`);
+}
+
+function endLiveMonitor(reason) {
+  if(lm.state === 'off') return;
+  if(lm.state === 'watching') {
+    lmSet('ended', 'MONITORING ENDED', `${esc(reason)} · ${lm.checks} live checks, no anomalies.`);
+    const pill = document.getElementById('statusPill');
+    if(pill.classList.contains('monitoring')) setStatusPill('done-green', 'SESSION COMPLETE');
+  }
+  lm.state = 'ended';
+}
+
+function resetLiveMonitor() {
+  Object.assign(lm, { state: 'off', t0: 0, checks: 0, last: null });
+  document.getElementById('liveMonitor').className = 'live-monitor';
+  document.getElementById('lmBeat').textContent = '';
+  document.getElementById('lmTitle').textContent = 'LIVE MONITORING';
+  document.getElementById('lmBody').textContent = 'Behaviour re-checked every second against the charger baseline.';
+}
+
 // ── Preset definitions ──────────────────────────────────────────────────────
 const PRESETS = {
   healthy: {
@@ -1537,6 +1628,7 @@ function handleEvent(ev) {
   if(ev.event === 'session')     renderSession(ev);
   if(ev.event === 'advisory')    renderAdvisory(ev);
   if(ev.event === 'alert')       addAlert(ev.level || 'warn', ev.message);
+  if(ev.event === 'monitor') updateLiveMonitor(ev);
   if(ev.event === 'monitor' && ev.status === 'suspicious' && !monitorAlerted) {
     monitorAlerted = true;
     addAlert('crit', `[MONITOR] ${ev.anomalies.map(a=>a.rule).filter((v,i,s)=>s.indexOf(v)===i).join(', ')}`);
@@ -1546,8 +1638,12 @@ function handleEvent(ev) {
     addAlert(lvl, `ENFORCEMENT: ${ev.detail}`);
     (ev.steps || []).forEach(s => addAlert('crit', '↳ ' + s));
     if(ev.action === 'isolate') setStatusPill('done-red', 'ISOLATED');
+    enforcementLiveMonitor(ev);
   }
-  if(ev.event === 'disconnected') addAlert('info', `Charger ${ev.device_id} disconnected`);
+  if(ev.event === 'disconnected') {
+    addAlert('info', `Charger ${ev.device_id} disconnected`);
+    endLiveMonitor('Charging session finished and the charger disconnected');
+  }
 
   if(ev.event === 'check_start') {
     setCheckRow(ev.check, 'active',
@@ -1587,6 +1683,9 @@ function handleEvent(ev) {
       setCheckRow('behavior', 'fail', ev.results.behavior.detail, 'live monitor');
       setResultCard('behavior', 'fail', 'FAIL', 'live');
       if(window.sceneCtrl) window.sceneCtrl.resolveNode('behavior', 'fail');
+      alertLiveMonitor(ev);
+    } else if(ev.verdict !== 'red') {
+      startLiveMonitor(ev);        // the verdict is not the end: the session stays under watch
     }
   }
 
@@ -1620,6 +1719,7 @@ function resetUI() {
   document.getElementById('timerBarFill').style.width = '0%';
   ocppFrames.length = 0;
   verifyT0 = null; monitorAlerted = false; lastAdvisory = null; lastReport = null;
+  resetLiveMonitor();
 }
 
 function getDefaultDetail(n) {

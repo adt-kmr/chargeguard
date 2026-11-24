@@ -282,7 +282,8 @@ class Gateway:
                 records = session.behaviour_records(BEHAVIOUR_WINDOW_S)
                 result = checks.check_behaviour(records, BEHAVIOUR_WINDOW_S, session.prior_messages(BEHAVIOUR_WINDOW_S))
                 session.emit("monitor", status="suspicious" if result.status == "fail" else "normal",
-                             anomalies=result.evidence["anomalies"][:6])
+                             anomalies=result.evidence["anomalies"][:6], records=len(records),
+                             window_s=BEHAVIOUR_WINDOW_S, compute_ms=result.evidence.get("compute_ms"))
                 if result.status == "fail" and not session.enforcement and not session.responding:
                     session.responding = True
                     session.results["behavior"] = result
