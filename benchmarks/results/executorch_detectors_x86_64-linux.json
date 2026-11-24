@@ -1,0 +1,32 @@
+{
+  "executorch": "1.6.0",
+  "torch": "2.15.0+cpu",
+  "host": {
+    "machine": "x86_64",
+    "os": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39"
+  },
+  "backend": "XNNPACK (portable kernels for embedding lookup)",
+  "max_active_features": 1024,
+  "sms_scam": {
+    "pte_bytes": 2100512,
+    "parity_inputs": 300,
+    "max_abs_diff_vs_python": 4.998904466629178e-05,
+    "decision_agreement": 1.0,
+    "latency_ms": {
+      "runs": 500,
+      "p50": 0.0122,
+      "p95": 0.0132
+    }
+  },
+  "phishing_url": {
+    "pte_bytes": 1051936,
+    "parity_inputs": 7,
+    "max_abs_diff_vs_python": 1.2314881758790364e-07,
+    "decision_agreement": 1.0,
+    "latency_ms": {
+      "runs": 500,
+      "p50": 0.0126,
+      "p95": 0.0148
+    }
+  }
+}
