@@ -36,12 +36,25 @@ def init_db() -> None:
     CREATE TABLE IF NOT EXISTS cve_entries (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         firmware_hash TEXT NOT NULL,
-        cve_id        TEXT NOT NULL UNIQUE,
+        cve_id        TEXT NOT NULL,
         severity      TEXT NOT NULL,
         cvss_score    REAL,
         component     TEXT,
         description   TEXT,
-        fixed_in      TEXT
+        fixed_in      TEXT,
+        UNIQUE (firmware_hash, cve_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS attestation_registry (
+        device_id      TEXT PRIMARY KEY,
+        ak_pub_der_hex TEXT NOT NULL,
+        ak_algorithm   TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS firmware_measurements (
+        firmware_hash TEXT PRIMARY KEY,
+        image_name    TEXT NOT NULL,
+        golden_pcr0   TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS identity_registry (
@@ -69,6 +82,29 @@ def init_db() -> None:
 
 
 # ── Seed helpers ─────────────────────────────────────────────────────────────
+
+_REGISTRY_TABLES = ("firmware_registry", "cve_entries", "identity_registry",
+                    "attestation_registry", "firmware_measurements")
+
+
+def reset_registries() -> None:
+    """Drop the registries that setup regenerates from source (verification runs are kept)."""
+    conn = get_conn()
+    for t in _REGISTRY_TABLES:
+        conn.execute(f"DROP TABLE IF EXISTS {t}")
+    conn.commit()
+    conn.close()
+    init_db()
+
+
+def seed_attestation(ak_rows: list, measurement_rows: list) -> None:
+    conn = get_conn()
+    conn.executemany("INSERT OR REPLACE INTO attestation_registry VALUES (?,?,?)",
+                     [(r["device_id"], r["ak_pub_der_hex"], r["ak_algorithm"]) for r in ak_rows])
+    conn.executemany("INSERT OR REPLACE INTO firmware_measurements VALUES (?,?,?)",
+                     [(r["firmware_hash"], r["image_name"], r["golden_pcr0"]) for r in measurement_rows])
+    conn.commit()
+    conn.close()
 
 def seed_firmware(entries: list) -> None:
     conn = get_conn()
@@ -167,3 +203,17 @@ def get_run(session_id: str) -> dict | None:
         d["results"] = json.loads(d["results_json"])
         return d
     return None
+
+
+def lookup_attestation_key(device_id: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM attestation_registry WHERE device_id = ?", (device_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def lookup_golden_pcr0(firmware_hash: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM firmware_measurements WHERE firmware_hash = ?", (firmware_hash,)).fetchone()
+    conn.close()
+    return dict(row) if row else None

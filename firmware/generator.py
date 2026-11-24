@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from config import FIRMWARE_DIR, KEYS_DIR, DEVICE_ID, VENDOR
+from config import FIRMWARE_DIR, KEYS_DIR, DEVICE_ID, VENDOR, CHARGER_MODEL
 
 MAGIC = b"CGFW"
 HEADER_SIZE = 256
@@ -52,9 +52,29 @@ def _build_header(version: str, device_id: str, vendor: str,
     return bytes(hdr)
 
 
+# Component banners compiled into each build, exactly as the upstream
+# projects embed them. The audit (audit/lite_audit.py) finds these.
+COMPONENTS = {
+    "good-2.1.0": [
+        b"OpenSSL 3.0.18 30 Sep 2025\x00",
+        b" inflate 1.3.1 Copyright 1995-2024 Mark Adler \x00",
+        b"BusyBox v1.37.0 (2024-11-01 00:00:00 UTC) multi-call binary.\x00",
+    ],
+    "vuln-1.8.3": [
+        b"OpenSSL 1.1.1k  25 Mar 2021\x00",
+        b" inflate 1.2.11 Copyright 1995-2017 Mark Adler \x00",
+        b"BusyBox v1.33.0 (2023-01-15 00:00:00 UTC) multi-call binary.\x00",
+    ],
+}
+
+
 def _make_payload(seed: str, size: int = 8192, tamper: bool = False) -> bytes:
     rng = random.Random(seed)
     data = bytearray(rng.randint(0, 255) for _ in range(size))
+    offset = 1024
+    for banner in COMPONENTS.get(seed, []):
+        data[offset:offset + len(banner)] = banner
+        offset += len(banner) + 512
     if tamper:
         data[42]  ^= 0xFF
         data[100] ^= 0xAA
@@ -130,41 +150,17 @@ def generate_all() -> tuple[list, list, list]:
         "pub_key_hex": vendor_pub_hex, "sig_hex": sig_vuln.hex(),
     })
 
-    cve_rows += [
-        {
-            "firmware_hash": hash_vuln_hex,
-            "cve_id": "CVE-2022-0778",
-            "severity": "HIGH",
-            "cvss_score": 7.5,
-            "component": "openssl/1.1.1k",
-            "description": "OpenSSL infinite loop in BN_mod_sqrt() — allows DoS via crafted certificate.",
-            "fixed_in": "openssl/1.1.1n",
-        },
-        {
-            "firmware_hash": hash_vuln_hex,
-            "cve_id": "CVE-2021-28831",
-            "severity": "HIGH",
-            "cvss_score": 7.5,
-            "component": "busybox/1.33.0",
-            "description": "BusyBox gunzip invalid free — arbitrary code execution via crafted archive.",
-            "fixed_in": "busybox/1.33.2",
-        },
-        {
-            "firmware_hash": hash_vuln_hex,
-            "cve_id": "CVE-2022-37434",
-            "severity": "CRITICAL",
-            "cvss_score": 9.8,
-            "component": "zlib/1.2.11",
-            "description": "zlib heap buffer overflow in inflate() — remote code execution via crafted input.",
-            "fixed_in": "zlib/1.2.13",
-        },
-    ]
+    # Known weaknesses come from auditing the images themselves (audit once)
+    from audit.lite_audit import audit_bytes
+    for payload, digest in ((payload_good, hash_good_hex), (payload_vuln, hash_vuln_hex)):
+        for cve in audit_bytes(payload)["cves"]:
+            cve_rows.append({"firmware_hash": digest, **cve})
 
     identity_rows = [{
         "device_id": DEVICE_ID,
         "pub_key_hex": device_pub_hex,
         "enrolled_at": "2024-10-01T00:00:00",
-        "charger_model": "ChargeCo AC-7 Pro",
+        "charger_model": CHARGER_MODEL,
         "vendor": VENDOR,
     }]
 
@@ -189,3 +185,49 @@ def get_hash_for_mode(mode: str) -> str:
     else:  # vulnerable
         payload = _make_payload("vuln-1.8.3", tamper=False)
     return hashlib.sha256(payload).hexdigest()
+
+
+# ── Attestation enrolment (measured boot) ────────────────────────────────
+
+def measure_image(image: bytes) -> str:
+    """PCR0 after the charger's boot ROM extends the full firmware image into it."""
+    pcr0 = hashlib.sha256(b"\x00" * 32 + hashlib.sha256(image).digest()).digest()
+    return pcr0.hex()
+
+
+def attestation_key_path(device_id: str = DEVICE_ID) -> Path:
+    return KEYS_DIR / f"{device_id}_ak.pem"
+
+
+def generate_attestation_enrollment() -> tuple[list, list]:
+    """
+    Enrol the charger's TPM attestation key and record the golden PCR0 value of
+    every vendor-registered image.
+
+    Returns:
+        ak_rows           – rows for attestation_registry (device_id, AK public key)
+        measurement_rows  – rows for firmware_measurements (payload hash, golden PCR0)
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    path = attestation_key_path()
+    if path.exists():
+        ak = load_pem_private_key(path.read_bytes(), password=None)
+    else:
+        ak = ec.generate_private_key(ec.SECP256R1())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(ak.private_bytes(serialization.Encoding.PEM,
+                                          serialization.PrivateFormat.PKCS8,
+                                          serialization.NoEncryption()))
+    ak_der = ak.public_key().public_bytes(serialization.Encoding.DER,
+                                          serialization.PublicFormat.SubjectPublicKeyInfo)
+    ak_rows = [{"device_id": DEVICE_ID, "ak_pub_der_hex": ak_der.hex(), "ak_algorithm": "ecc-p256"}]
+
+    measurement_rows = []
+    for name in ("good_v2.1.0.bin", "vulnerable_v1.8.3.bin"):
+        image = (FIRMWARE_DIR / name).read_bytes()
+        payload_hash = image[68:100].hex()
+        measurement_rows.append({"firmware_hash": payload_hash, "image_name": name,
+                                 "golden_pcr0": measure_image(image)})
+    return ak_rows, measurement_rows
