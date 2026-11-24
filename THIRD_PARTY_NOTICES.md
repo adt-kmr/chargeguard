@@ -39,6 +39,18 @@ be preserved.
 | Facedancer | `98790aa`, 2026-11-05 | `attack-lab/facedancer` | BSD-3-Clause |
 | Renode | `b366439`, 2026-11-23 | `attack-lab/renode` | MIT |
 
+## Dashboard assets
+
+| Asset | Source | Path | License |
+|-------|--------|------|---------|
+| Car Concept 3D model | Khronos glTF Sample Assets, `Models/CarConcept` (`7d4ba18`). Model and textures by Eric Chadwick, © 2024 Darmstadt Graphics Group GmbH | `dashboard/static/models/car_concept.glb` | CC-BY-4.0 |
+
+**Changes made:** the three textures carrying the Khronos and 3D Commerce logos (which that
+licence excludes) were replaced with plain colours by
+[`scripts/prepare_car_model.py`](scripts/prepare_car_model.py), and the licence plate is
+rendered blank. Geometry and every other texture are unchanged. Details:
+[`dashboard/static/models/ATTRIBUTION.md`](dashboard/static/models/ATTRIBUTION.md).
+
 External repositories that were git submodules upstream are not included;
 they are pinned in `vendor/submodules.lock` and keep their own licenses
 when fetched.
