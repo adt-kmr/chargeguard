@@ -1,36 +1,112 @@
-# Python
+# ChargeGuard .gitignore
+#
+# Rule of thumb: secrets, keys, generated runtime data, model weights and local
+# tooling never enter git. The vendored upstream projects under vendor/ keep
+# their own test fixtures (sample keys, test PKIs) exactly as published, so the
+# secret patterns below are re-allowed for vendor/ only (see the last section).
+
+# ── Secrets and credentials ─────────────────────────────────────────────────
+# Environment files
+.env
+.env.*
+!.env.example
+*.env
+.envrc
+
+# Private keys, keystores and certificates bundles
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*.gpg
+*.asc
+
+# Cosign / Sigstore signing keys (public .pub keys are fine to commit)
+cosign.key
+*.cosign.key
+
+# Credential and token files
+secrets.*
+*secret*.json
+*secrets*.yaml
+*secrets*.yml
+credentials*
+*credentials*.json
+*.token
+token.txt
+.netrc
+.npmrc
+.pypirc
+service-account*.json
+
+# ChargeGuard key material (vendor, device and TPM attestation keys)
+/firmware/keys/
+/keys/
+
+# ── Generated at runtime (python main.py / provisioning) ────────────────────
+/db/*.db
+/db/*.db-wal
+/db/*.db-shm
+/db/*.sqlite*
+/firmware/images/*.bin
+/evidence/reports/
+/evidence/bundles/
+/audit/audit_cache.db
+/audit/cache/
+*.log
+/logs/
+
+# ── On-device AI models and weights (licensed; fetched per node) ────────────
+/models/
+*.pte
+*.gguf
+*.safetensors
+*.onnx
+*.hef
+*.ckpt
+*.pt
+*.pth
+tokenizer.model
+
+# ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.egg-info/
+.eggs/
+build/
+dist/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
 
 # Virtual environments
 /.venv/
 /venv/
 /env/
 
-# Environment / secrets
-/.env
-/*.pem
-firmware/keys/
-
-# Generated at runtime by `python main.py`
-db/*.db
-db/*.db-wal
-db/*.db-shm
-firmware/images/*.bin
-evidence/reports/*.json
-
-# Editors / OS
+# ── Editors, OS and local tooling ───────────────────────────────────────────
 /.vscode/
 /.idea/
+*.swp
+*~
 .DS_Store
 Thumbs.db
-
-# Firmware audit cache (C3), rebuilt on demand
-audit/audit_cache.db
-audit/cache/
-
-# Local editor / assistant tooling
+desktop.ini
 /.claude/
+
+# ── Vendored upstream sources ───────────────────────────────────────────────
+# vendor/ is a verbatim snapshot of upstream projects. Their published test
+# keys, sample certificates and fixtures must stay tracked, and their own
+# nested .gitignore files handle build outputs.
+!/vendor/**
