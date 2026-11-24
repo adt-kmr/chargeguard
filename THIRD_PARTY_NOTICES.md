@@ -1,7 +1,7 @@
 # Third-party notices
 
 ChargeGuard includes source code from the open-source projects below,
-located under `third_party/`. Each is used under its own license; the full
+located under `vendor/`. Each is used under its own license; the full
 license text (and any NOTICE / COPYRIGHT file) is kept in that component's
 folder and must stay there. Copyright headers inside source files must also
 be preserved.
@@ -40,7 +40,7 @@ be preserved.
 | Renode | `b366439`, 2026-11-23 | `attack-lab/renode` | MIT |
 
 External repositories that were git submodules upstream are not included;
-they are pinned in `third_party/submodules.lock` and keep their own licenses
+they are pinned in `vendor/submodules.lock` and keep their own licenses
 when fetched.
 
 ## Obligations
@@ -60,5 +60,5 @@ when fetched.
 - **AGPL-3.0 (Bruce)**: runs on separate ESP32 test hardware. If you modify it
   and offer it over a network, you must provide the modified source.
 
-Modifications made to snapshots are listed in `third_party/README.md` and
-`third_party/tpm/README.md`.
+Modifications made to snapshots are listed in `vendor/README.md` and
+`vendor/tpm/README.md`.

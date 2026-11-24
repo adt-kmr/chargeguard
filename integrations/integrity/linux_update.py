@@ -13,11 +13,11 @@ from ..core import Finding, Severity, Tool, ToolResult, register_tool, run, time
 
 RAUC = register_tool(Tool(
     name="rauc", executables=("rauc",), feature="C2", vendored="update/rauc",
-    install_hint="Build with meson (third_party/update/rauc) or install the distro package.",
+    install_hint="Build with meson (vendor/update/rauc) or install the distro package.",
 ))
 SWUPDATE = register_tool(Tool(
     name="swupdate", executables=("swupdate",), feature="C2", vendored="update/swupdate",
-    install_hint="Build third_party/update/swupdate with CONFIG_SIGNED_IMAGES=y.",
+    install_hint="Build vendor/update/swupdate with CONFIG_SIGNED_IMAGES=y.",
 ))
 
 

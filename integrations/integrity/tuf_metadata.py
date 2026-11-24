@@ -8,7 +8,7 @@ mix-and-match attacks. Uptane builds on the same model for vehicles.
 ChargeGuard uses the ngclient to ask: "is this firmware hash the one the
 vendor's update repository currently publishes for this target?"
 
-Requires: pip install tuf   (source vendored in third_party/update/python-tuf)
+Requires: pip install tuf   (source vendored in vendor/update/python-tuf)
 """
 from __future__ import annotations
 

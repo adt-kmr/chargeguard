@@ -1,7 +1,7 @@
 """
 Turn a BehaviorReport into an enforcement policy for wolfSentry.
 
-wolfSentry (third_party/network-monitor/wolfsentry) is an embedded firewall /
+wolfSentry (vendor/network-monitor/wolfsentry) is an embedded firewall /
 IDPS for RTOS and bare-metal targets. It loads a JSON configuration; this
 module renders one from the baseline:
 

@@ -1,5 +1,5 @@
 # Pinned external dependencies (former git submodules) not stored in this repo.
-# Fetch with: python third_party/fetch_submodules.py [component ...]
+# Fetch with: python vendor/fetch_submodules.py [component ...]
 # component	path	url	commit
 secure-boot/mcuboot	ext/mbedtls-3.6.0	https://github.com/ARMmbed/mbedtls	2ca6c285a0dd3f33982dd57299012dacab1ff206
 secure-boot/mcuboot	boot/cypress/libs/mtb-pdl-cat1	https://github.com/cypresssemiconductorco/mtb-pdl-cat1.git	55b5a5457195ad2a2a02e0a98ca72a9333e26397

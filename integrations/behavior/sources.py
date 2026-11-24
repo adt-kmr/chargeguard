@@ -16,7 +16,7 @@ from ..core import Tool, ToolResult, register_tool, run, run_json, timed
 
 IOTAUDIT = register_tool(Tool(
     "iotaudit", ("iotaudit",), "C4", vendored="network-monitor/iotaudit", python_module="iotaudit",
-    install_hint="pip install -e third_party/network-monitor/iotaudit"))
+    install_hint="pip install -e vendor/network-monitor/iotaudit"))
 TSHARK = register_tool(Tool(
     "tshark", ("tshark",), "C4",
     install_hint="Install Wireshark/tshark (apt install tshark, or the Wireshark installer on Windows)."))

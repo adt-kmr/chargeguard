@@ -1,7 +1,7 @@
 # attestation
 
 Backend-neutral TPM 2.0 attestation for ChargeGuard. It wraps the vendored
-stacks in `third_party/tpm/` behind one small API so the rest of the app
+stacks in `vendor/tpm/` behind one small API so the rest of the app
 never depends on a specific TPM library.
 
 **Status:** standalone. Not wired into `checks/`, `orchestrator/` or the
@@ -59,7 +59,7 @@ with TPMEmulator() as emu, get_backend("tpm2-tss", tcti=emu.tcti) as tpm:
 |----------|---------|---------|
 | `CHARGEGUARD_TPM_BACKEND` | `software` | Default backend for `get_backend()` |
 | `CHARGEGUARD_TPM_TCTI` | `mssim:host=127.0.0.1,port=2321` | tpm2-tss transport (`device:/dev/tpmrm0` for hardware) |
-| `CHARGEGUARD_TPM_EMULATOR` | `third_party/tpm/ibmswtpm2/src/tpm_server` | Emulator binary |
+| `CHARGEGUARD_TPM_EMULATOR` | `vendor/tpm/ibmswtpm2/src/tpm_server` | Emulator binary |
 | `CHARGEGUARD_TPM_EMULATOR_PORT` | `2321` | Emulator command port |
 | `CHARGEGUARD_KEYLIME_VERIFIER` | `https://127.0.0.1:8881` | Keylime verifier URL |
 | `CHARGEGUARD_KEYLIME_API` | `2.3` | Keylime REST API version |

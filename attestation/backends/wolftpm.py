@@ -3,7 +3,7 @@ wolfTPM backend (embedded charger side).
 
 wolfTPM targets microcontrollers that talk to a discrete TPM over SPI/I2C,
 which is how a production EV charger controller would hold its identity.
-The C sources live in third_party/tpm/wolftpm; there is no official Python
+The C sources live in vendor/tpm/wolftpm; there is no official Python
 binding, so this backend is a placeholder that defines the integration
 contract. Two intended integration routes:
 

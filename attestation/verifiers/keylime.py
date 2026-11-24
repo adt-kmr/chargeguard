@@ -1,7 +1,7 @@
 """
 Keylime verifier adapter.
 
-Keylime (third_party/tpm/keylime) runs continuous remote attestation: a
+Keylime (vendor/tpm/keylime) runs continuous remote attestation: a
 registrar enrols agents' EK/AK, and a verifier polls each agent for quotes
 and IMA / measured-boot logs. ChargeGuard does not drive that loop itself;
 it asks the Keylime verifier for an agent's current operational state and

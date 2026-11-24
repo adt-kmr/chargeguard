@@ -1,4 +1,4 @@
-# third_party
+# vendor
 
 Vendored source snapshots of the open-source tools ChargeGuard builds on,
 grouped by capability. Version-control history, CI pipelines and
@@ -37,8 +37,8 @@ upstream (Mbed TLS, wolfSSL, HAL packs, Renode infrastructure). They are not
 stored here; their exact commits are pinned in [`submodules.lock`](submodules.lock):
 
 ```bash
-python third_party/fetch_submodules.py --list
-python third_party/fetch_submodules.py secure-boot/wolfboot
+python vendor/fetch_submodules.py --list
+python vendor/fetch_submodules.py secure-boot/wolfboot
 ```
 
 ## Trimmed content

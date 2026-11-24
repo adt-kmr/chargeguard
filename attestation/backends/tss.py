@@ -7,7 +7,7 @@ Talks to any TPM that tpm2-tss can reach through a TCTI:
   * Linux hardware TPM          ->  "device:/dev/tpmrm0"
 
 Requirements (optional, not in requirements.txt):
-  - tpm2-tss native libraries (third_party/tpm/tpm2-tss, or the distro package)
+  - tpm2-tss native libraries (vendor/tpm/tpm2-tss, or the distro package)
   - pip install tpm2-pytss
 
 Status: experimental – written against the tpm2-pytss 2.x ESAPI and not yet

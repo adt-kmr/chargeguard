@@ -4,7 +4,7 @@ ChargeGuard check expected to catch it.
 
 For authorised testing on lab equipment you own only. Wireless and USB tools
 (Bruce on ESP32, Facedancer) run on separate hardware; their source is
-vendored under third_party/attack-lab/ for building and auditing, and is
+vendored under vendor/attack-lab/ for building and auditing, and is
 never invoked automatically by ChargeGuard.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ class AttackScenario:
     id: str
     title: str
     tool: str                    # what produces the attack
-    vendored: str | None         # path under third_party/, if any
+    vendored: str | None         # path under vendor/, if any
     target_check: str            # C1..C4 check expected to fire
     expected_verdict: str        # green / amber / red
     automated: bool              # can run unattended in CI

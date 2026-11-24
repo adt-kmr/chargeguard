@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-THIRD_PARTY_TPM = PROJECT_ROOT / "third_party" / "tpm"
+VENDOR_TPM = PROJECT_ROOT / "vendor" / "tpm"
 
 
 def _env(key: str, default: str) -> str:
@@ -29,7 +29,7 @@ class AttestationConfig:
     # IBM software TPM emulator
     emulator_binary: Path = field(default_factory=lambda: Path(_env(
         "CHARGEGUARD_TPM_EMULATOR",
-        str(THIRD_PARTY_TPM / "ibmswtpm2" / "src" / ("tpm_server.exe" if os.name == "nt" else "tpm_server")))))
+        str(VENDOR_TPM / "ibmswtpm2" / "src" / ("tpm_server.exe" if os.name == "nt" else "tpm_server")))))
     emulator_port: int = field(default_factory=lambda: int(_env("CHARGEGUARD_TPM_EMULATOR_PORT", "2321")))
 
     # Keylime verifier REST API

@@ -1,8 +1,8 @@
 """
-Launch and stop the IBM software TPM emulator (third_party/tpm/ibmswtpm2).
+Launch and stop the IBM software TPM emulator (vendor/tpm/ibmswtpm2).
 
 Build it first (Linux/macOS/WSL):
-    cd third_party/tpm/ibmswtpm2/src && make
+    cd vendor/tpm/ibmswtpm2/src && make
 Then:
     with TPMEmulator() as emu:
         with get_backend("tpm2-tss", tcti=emu.tcti) as tpm: ...

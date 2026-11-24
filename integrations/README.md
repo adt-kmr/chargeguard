@@ -1,7 +1,7 @@
 # integrations
 
 Python adapters around the third-party security tools vendored in
-[`third_party/`](../third_party/README.md). Each adapter returns the same
+[`vendor/`](../vendor/README.md). Each adapter returns the same
 `ToolResult` / `Finding` types, so the orchestrator can treat every tool the
 same way. (C1 identity and attestation is the sibling
 [`attestation/`](../attestation/README.md) package.)
@@ -68,10 +68,10 @@ found in this order:
 
 1. `CHARGEGUARD_TOOL_<NAME>` environment variable (e.g. `CHARGEGUARD_TOOL_SYFT=/opt/syft`)
 2. the system `PATH`
-3. a build output inside `third_party/`
+3. a build output inside `vendor/`
 4. an importable Python module
 
-Build instructions for each vendored tool are in `third_party/README.md`.
+Build instructions for each vendored tool are in `vendor/README.md`.
 Several tools (EMBA, RAUC, SWUpdate, unblob's extractors) are Linux-only; run
 them on Linux or in WSL.
 

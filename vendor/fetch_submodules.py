@@ -5,9 +5,9 @@ The vendored snapshots do not include their former git submodules (crypto
 libraries, HAL packs, Renode's infrastructure). Run this before building a
 component that needs them:
 
-    python third_party/fetch_submodules.py secure-boot/wolfboot
-    python third_party/fetch_submodules.py --list
-    python third_party/fetch_submodules.py            # everything
+    python vendor/fetch_submodules.py secure-boot/wolfboot
+    python vendor/fetch_submodules.py --list
+    python vendor/fetch_submodules.py            # everything
 
 Fetched trees land at their original paths and are git-ignored.
 """

@@ -3,7 +3,7 @@ Shared plumbing for wrapping external security tools.
 
 Every adapter in this package describes its tool with a `Tool` entry and
 runs it through `run()`. That gives one consistent way to:
-  * locate a binary (env override -> PATH -> build output under third_party/)
+  * locate a binary (env override -> PATH -> build output under vendor/)
   * enforce a timeout (the orchestrator works to a 5-second budget)
   * capture stdout/stderr and parse JSON
   * report missing tools as `ToolUnavailable` instead of crashing
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-THIRD_PARTY = PROJECT_ROOT / "third_party"
+VENDOR_DIR = PROJECT_ROOT / "vendor"
 
 
 class ToolUnavailable(RuntimeError):
@@ -91,8 +91,8 @@ class Tool:
     name: str
     executables: tuple[str, ...]                 # names to search on PATH
     feature: str                                 # C2, C3, ...
-    vendored: str | None = None                  # path under third_party/
-    # candidate built binaries/scripts, relative to third_party/. Prefix with
+    vendored: str | None = None                  # path under vendor/
+    # candidate built binaries/scripts, relative to vendor/. Prefix with
     # "python:" or "bash:" to run through an interpreter (bash ones are skipped on Windows).
     build_outputs: tuple[str, ...] = ()
     python_module: str | None = None             # run as `python -m module` if importable
@@ -116,7 +116,7 @@ class Tool:
         deps_ok = all(importlib.util.find_spec(m) is not None for m in self.requires_modules)
         for entry in self.build_outputs:
             interp, _, rel = entry.rpartition(":")
-            p = THIRD_PARTY / rel
+            p = VENDOR_DIR / rel
             if not p.exists():
                 continue
             if interp == "python" and deps_ok:

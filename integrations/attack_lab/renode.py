@@ -6,21 +6,21 @@ tests apply the same verification as a physical charger (e.g. feed it a
 tampered image and confirm ChargeGuard flags it).
 
 Install Renode from a release package (the vendored source in
-third_party/attack-lab/renode needs its submodules to build; see
-third_party/submodules.lock).
+vendor/attack-lab/renode needs its submodules to build; see
+vendor/submodules.lock).
 """
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
 
-from ..core import THIRD_PARTY, Tool, ToolResult, register_tool, run, timed
+from ..core import VENDOR_DIR, Tool, ToolResult, register_tool, run, timed
 
 RENODE = register_tool(Tool(
     "renode", ("renode", "Renode"), "C9", vendored="attack-lab/renode",
-    install_hint="Install a Renode release (renode.io) or build third_party/attack-lab/renode."))
+    install_hint="Install a Renode release (renode.io) or build vendor/attack-lab/renode."))
 
-PLATFORMS = THIRD_PARTY / "attack-lab" / "renode" / "platforms" / "boards"
+PLATFORMS = VENDOR_DIR / "attack-lab" / "renode" / "platforms" / "boards"
 DEFAULT_BOARD = "stm32f4_discovery-kit.repl"          # Cortex-M4, typical charger-controller class
 
 

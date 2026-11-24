@@ -22,7 +22,7 @@ IMGTOOL = register_tool(Tool(
     vendored="secure-boot/mcuboot",
     build_outputs=("python:secure-boot/mcuboot/scripts/imgtool.py",),
     requires_modules=("click", "cryptography", "intelhex", "cbor2"),
-    install_hint="pip install -r third_party/secure-boot/mcuboot/scripts/requirements.txt",
+    install_hint="pip install -r vendor/secure-boot/mcuboot/scripts/requirements.txt",
 ))
 
 

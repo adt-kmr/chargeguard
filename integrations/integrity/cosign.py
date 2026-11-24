@@ -18,7 +18,7 @@ from ..core import Finding, Severity, Tool, ToolResult, register_tool, run, time
 COSIGN = register_tool(Tool(
     name="cosign", executables=("cosign",), feature="C2/C7",
     vendored="signing/cosign",
-    install_hint="Build with `cd third_party/signing/cosign && make cosign`, or install a release binary.",
+    install_hint="Build with `cd vendor/signing/cosign && make cosign`, or install a release binary.",
 ))
 
 

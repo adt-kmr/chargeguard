@@ -1,5 +1,5 @@
 """
-ChargeGuard integrations: adapters around the third-party tools in third_party/.
+ChargeGuard integrations: adapters around the third-party tools in vendor/.
 
     integrations.integrity      C2  MCUboot/wolfBoot, RAUC/SWUpdate, Cosign, TUF
     integrations.vulnerability  C3  unblob, Syft, Grype, cve-bin-tool, mithril, checksec,
