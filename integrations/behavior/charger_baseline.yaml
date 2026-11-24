@@ -1,0 +1,42 @@
+# Charger behaviour baseline (C4 custom piece).
+# What a healthy charger is expected to do on the network. Anything outside
+# this profile raises an anomaly. Tune per charger model / site.
+
+device: CG-CHARGER-001
+version: 1
+
+peers:                      # expected destinations (hostnames, IPs or CIDRs)
+  - name: csms              # central system (OCPP backend)
+    hosts: [localhost, 127.0.0.1]
+    ports: [8080, 443]
+    protocols: [OCPP, HEARTBEAT, STATUS, METER]
+  - name: ntp
+    hosts: [10.0.0.1]
+    ports: [123]
+    protocols: [NTP]
+
+listening_ports: []          # the charger should not expose services
+
+rates:                       # max messages per second, per protocol
+  default: 5
+  HEARTBEAT: 1
+  STATUS: 2
+  METER: 4
+  OCPP: 5
+
+require_encryption: [443]    # ports where plaintext is an anomaly
+
+# Ordered protocol phases. A message type may only appear once its phase
+# (or a later one) has been reached.
+phases:
+  - name: boot
+    messages: [BootNotification]
+  - name: idle
+    messages: [Heartbeat, StatusNotification]
+  - name: session
+    messages: [Authorize, StartTransaction, MeterValues, StopTransaction]
+
+enforcement:
+  # unexpected peer / port -> block that peer; severe pattern -> isolate the charger
+  isolate_on: [c2-pattern, port-scan, exfiltration]
+  block_on: [unexpected-peer, unexpected-port, rate-exceeded, plaintext]
