@@ -3,6 +3,7 @@ C7 – Evidence Bundle Generator
 Produces a SARIF 2.1-compatible JSON report + signed verdict file,
 annotated with compliance controls from the policy mapper.
 """
+import hashlib
 import json
 import sys
 import uuid
@@ -16,7 +17,7 @@ from evidence.signer import sign_verdict
 
 
 def generate(session_id: str, verdict: str, reason: str, score: int,
-             results: dict, charger_mode: str) -> dict:
+             results: dict, charger_mode: str, extras: dict | None = None) -> dict:
     """
     results: { check_name: CheckResult }
     Returns the full report dict (also saved to disk).
@@ -86,28 +87,46 @@ def generate(session_id: str, verdict: str, reason: str, score: int,
         },
     }
 
-    signature = sign_verdict(verdict_payload)
-
     report = {
-        "chargeGuard_version": "1.0.0",
+        "chargeGuard_version": "1.1.0",
         "session_id":          session_id,
         "generated_at":        timestamp,
         "charger_mode":        charger_mode,
         "verdict":             verdict,
         "score":               score,
         "reason":              reason,
-        "signature":           signature,
-        "signed_payload":      verdict_payload,
         "compliance_controls": all_controls,
         "sarif":               sarif,
         "check_details": {
             name: annotate(name, res.to_dict())
             for name, res in results.items()
         },
+        **(extras or {}),
     }
+
+    # Anchor the whole report body in the signed payload, so the live evidence
+    # (attestation, OCPP transcript, enforcement, advisory) is tamper-evident too.
+    body = json.dumps(report, sort_keys=True, separators=(",", ":"), default=str).encode()
+    verdict_payload["report_sha256"] = hashlib.sha256(body).hexdigest()
+    report["signed_payload"] = verdict_payload
+    report["signature"] = sign_verdict(verdict_payload)
 
     # Save to disk
     report_path = EVIDENCE_DIR / f"{session_id}.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     return report
+
+
+def verify_report(report: dict) -> tuple[bool, str]:
+    """Check the Ed25519 signature and that the report body still matches its signed digest."""
+    from evidence.signer import verify_verdict
+    payload = report.get("signed_payload", {})
+    if not verify_verdict(payload, report.get("signature", "")):
+        return False, "signature invalid"
+    body = {k: v for k, v in report.items() if k not in ("signed_payload", "signature")}
+    digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"),
+                                       default=str).encode()).hexdigest()
+    if digest != payload.get("report_sha256"):
+        return False, "report body modified after signing"
+    return True, "signature valid and report body intact"
