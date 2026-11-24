@@ -1,0 +1,5 @@
+# check out text files with lf on every platform (regardless of core.autocrlf), letting git detect binary files
+* text=auto eol=lf
+
+# fixtures that must keep their crlf line endings byte for byte
+grype/distro/testdata/unprintable -text

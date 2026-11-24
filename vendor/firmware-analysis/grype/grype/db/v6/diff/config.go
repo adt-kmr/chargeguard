@@ -1,0 +1,69 @@
+package diff
+
+import (
+	"time"
+
+	"github.com/anchore/grype/grype/db/v6/installation"
+)
+
+func DefaultConfig() Config {
+	return Config{
+		EPSSThreshold: 0.1,
+		Include: Includes{
+			Packages: true,
+			Vulns:    true,
+			KEV:      true,
+		},
+	}
+}
+
+type Includes struct {
+	Packages bool
+	Vulns    bool
+	EPSS     bool
+	KEV      bool
+}
+
+type Config struct {
+	installation.Config
+	Include       Includes
+	Debug         bool
+	EPSSThreshold float64
+	// OldDB is the database the diff is from (the first provided), regardless of build time
+	OldDB string
+	// NewDB is the database the diff is to (the second provided). When empty, the installed database is used
+	NewDB string
+	// DownloadTimeout bounds downloading a database given as a URL (zero means no timeout)
+	DownloadTimeout time.Duration
+}
+
+func (c Config) IncludePackages() bool {
+	if allUnset(c.Include) {
+		return true
+	}
+	return c.Include.Packages
+}
+
+func (c Config) IncludeVulns() bool {
+	if allUnset(c.Include) {
+		return true
+	}
+	return c.Include.Vulns
+}
+
+func (c Config) IncludeEPSS() bool {
+	return c.Include.EPSS
+}
+
+func (c Config) IncludeKEV() bool {
+	if allUnset(c.Include) {
+		return true
+	}
+	return c.Include.KEV
+}
+
+// allUnset reports whether neither packages nor vulns were requested, which means "diff everything" (so a zero
+// Includes runs a full diff)
+func allUnset(include Includes) bool {
+	return !include.Packages && !include.Vulns
+}
