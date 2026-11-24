@@ -60,3 +60,34 @@ async def index():
 async def scenarios():
     return get_all_scenarios()
 
+
+@app.post("/api/verify")
+async def start_verify(req: VerifyRequest):
+    session_id = str(uuid.uuid4())
+
+    # Legacy preset mapping
+    if req.mode:
+        preset = {
+            "healthy":    AttackConfig(),
+            "tampered":   AttackConfig(firmware_mode="tampered"),
+            "vulnerable": AttackConfig(firmware_mode="vulnerable"),
+            "compromised":AttackConfig(behavior_attack="port_scan"),
+        }
+        cfg = preset.get(req.mode, AttackConfig())
+    else:
+        cfg = AttackConfig(
+            identity_attack = req.identity_attack,
+            firmware_mode   = req.firmware_mode,
+            inject_cves     = req.inject_cves,
+            behavior_attack = req.behavior_attack,
+            behavior_target = req.behavior_target,
+            behavior_rate   = req.behavior_rate,
+        )
+
+    _sessions[session_id] = {
+        "mode":   req.mode or "custom",
+        "status": "pending",
+        "cfg":    cfg,
+    }
+    return {"session_id": session_id}
+
