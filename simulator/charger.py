@@ -33,3 +33,46 @@ class AttackConfig:
     behavior_rate: int = 50
 
 
+# ── Simulator ─────────────────────────────────────────────────────────────
+
+class ChargerSimulator:
+    def __init__(self):
+        self.device_id = DEVICE_ID
+        self.attack = AttackConfig()
+        self._legit_key = get_device_key()
+
+    def configure(self, cfg: AttackConfig) -> None:
+        self.attack = cfg
+
+    # Legacy compatibility: set_mode maps to AttackConfig presets
+    def set_mode(self, mode: str) -> None:
+        preset_map = {
+            "healthy":     AttackConfig(),
+            "tampered":    AttackConfig(firmware_mode="tampered"),
+            "vulnerable":  AttackConfig(firmware_mode="vulnerable"),
+            "compromised": AttackConfig(behavior_attack="port_scan"),
+        }
+        self.attack = preset_map.get(mode, AttackConfig())
+
+    # ── Identity ──────────────────────────────────────────────────────────
+
+    def sign_nonce(self, nonce: bytes) -> bytes:
+        """
+        legitimate → correct key (passes)
+        clone      → different generated key (sig will fail registry check)
+        unknown    → correct key but device_id will be unknown
+        """
+        if self.attack.identity_attack == "clone":
+            # Use a fresh ephemeral key — signature won't match enrolled key
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as K
+            return K.generate().sign(nonce)
+        return self._legit_key.sign(nonce)
+
+    @property
+    def effective_device_id(self) -> str:
+        if self.attack.identity_attack == "unknown":
+            return "ROGUE-CHARGER-999"
+        return self.device_id
+
+    # ── Firmware info ─────────────────────────────────────────────────────
+
