@@ -943,3 +943,256 @@ input[type=range]::-webkit-slider-thumb{
   </div>
 </div>
 
+<!-- ── THREE.JS SCENE ── -->
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const canvas = document.getElementById('three-canvas');
+const W = () => canvas.clientWidth, H = () => canvas.clientHeight;
+
+// ── Renderer ─────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0xdbeafe);
+renderer.setSize(W(), H(), false);
+
+// ── Scene ────────────────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xdbeafe, 18, 38);
+
+// ── Camera ───────────────────────────────────────────────────────────────
+const camera = new THREE.PerspectiveCamera(42, W()/H(), 0.1, 100);
+camera.position.set(5.5, 3.8, 5.5);
+camera.lookAt(0.5, 1, 0);
+
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0.5, 1, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 3; controls.maxDistance = 18;
+controls.maxPolarAngle = Math.PI * 0.48;
+
+// ── Lights ───────────────────────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+
+const sun = new THREE.DirectionalLight(0xfff8f0, 1.1);
+sun.position.set(6, 12, 8);
+sun.castShadow = true;
+sun.shadow.camera.near = 0.1; sun.shadow.camera.far = 40;
+sun.shadow.camera.left = -10; sun.shadow.camera.right = 10;
+sun.shadow.camera.top = 10; sun.shadow.camera.bottom = -10;
+sun.shadow.mapSize.set(1024, 1024);
+scene.add(sun);
+
+const fillLight = new THREE.DirectionalLight(0xdbeafe, 0.4);
+fillLight.position.set(-5, 4, -3);
+scene.add(fillLight);
+
+const stationLight = new THREE.PointLight(0x3b82f6, 1.8, 7);
+stationLight.position.set(1.8, 2.2, 0);
+scene.add(stationLight);
+window._stationLight = stationLight;
+
+// ── Ground ───────────────────────────────────────────────────────────────
+const groundMat = new THREE.MeshLambertMaterial({ color: 0xe0e7ff });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), groundMat);
+ground.rotation.x = -Math.PI/2; ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(26, 26, 0xc7d2fe, 0xdde4f8);
+grid.position.y = 0.002;
+scene.add(grid);
+
+// ── EV Car ───────────────────────────────────────────────────────────────
+function buildCar() {
+  const g = new THREE.Group();
+  const bodyM = new THREE.MeshPhongMaterial({color:0x1d4ed8,shininess:140,specular:0x6699ff});
+  const cabinM = new THREE.MeshPhongMaterial({color:0x1e3a8a,shininess:80});
+  const glassM = new THREE.MeshPhongMaterial({color:0x93c5fd,transparent:true,opacity:.5,shininess:200,specular:0xffffff});
+  const wheelM = new THREE.MeshPhongMaterial({color:0x1f2937,shininess:50});
+  const rimM   = new THREE.MeshPhongMaterial({color:0x94a3b8,shininess:200,specular:0xffffff});
+  const headM  = new THREE.MeshPhongMaterial({color:0xfef9c3,emissive:0xfef9c3,emissiveIntensity:.4});
+  const tailM  = new THREE.MeshPhongMaterial({color:0xfecaca,emissive:0xef4444,emissiveIntensity:.35});
+  const portM  = new THREE.MeshPhongMaterial({color:0x22c55e,emissive:0x22c55e,emissiveIntensity:.5});
+
+  // Body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.9,0.65,1.65),bodyM);
+  body.position.y = 0.65; body.castShadow = true; g.add(body);
+  // Cabin
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.3,0.58,1.42),cabinM);
+  cab.position.set(-0.1,1.15,0); cab.castShadow = true; g.add(cab);
+  // Windshields
+  const ws = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.5,1.32),glassM);
+  ws.position.set(0.98,1.15,0); ws.rotation.z = Math.PI*.1; g.add(ws);
+  const rw = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.5,1.32),glassM);
+  rw.position.set(-1.18,1.15,0); rw.rotation.z = -Math.PI*.1; g.add(rw);
+  // Hood
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.1,0.12,1.65),bodyM);
+  hood.position.set(1.65,0.88,0); hood.rotation.z = Math.PI*.07; g.add(hood);
+  // Wheels
+  [[1.25,.3,.92],[1.25,.3,-.92],[-1.25,.3,.92],[-1.25,.3,-.92]].forEach(p=>{
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.23,16),wheelM);
+    tire.rotation.x=Math.PI/2; tire.position.set(...p); tire.castShadow=true; g.add(tire);
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(.17,.17,.25,8),rimM);
+    rim.rotation.x=Math.PI/2; rim.position.set(...p); g.add(rim);
+  });
+  // Headlights
+  [.52,-.52].forEach(z=>{
+    const h=new THREE.Mesh(new THREE.BoxGeometry(.09,.11,.26),headM);
+    h.position.set(1.96,.72,z); g.add(h);
+  });
+  // Taillights
+  [.52,-.52].forEach(z=>{
+    const t=new THREE.Mesh(new THREE.BoxGeometry(.09,.11,.26),tailM);
+    t.position.set(-1.96,.72,z); g.add(t);
+  });
+  // Charging port (driver's side: z negative)
+  const port=new THREE.Mesh(new THREE.BoxGeometry(.12,.14,.09),portM);
+  port.position.set(-1.1,.72,-.85); g.add(port);
+  g.userData.portPos = new THREE.Vector3(-1.1,.72,-.85);
+  g.position.set(-2.3,0,0);
+  return g;
+}
+const car = buildCar();
+scene.add(car);
+
+// ── Charging Station ──────────────────────────────────────────────────────
+function buildStation() {
+  const g = new THREE.Group();
+  const darkM   = new THREE.MeshPhongMaterial({color:0x1e293b,shininess:70});
+  const baseM   = new THREE.MeshPhongMaterial({color:0x334155,shininess:40});
+  const screenM = new THREE.MeshPhongMaterial({color:0x2563eb,emissive:0x2563eb,emissiveIntensity:.5});
+  const ledM    = new THREE.MeshPhongMaterial({color:0x22c55e,emissive:0x22c55e,emissiveIntensity:1});
+  const logoM   = new THREE.MeshPhongMaterial({color:0x60a5fa,emissive:0x3b82f6,emissiveIntensity:.4});
+
+  const base=new THREE.Mesh(new THREE.BoxGeometry(.7,.09,.45),baseM);
+  base.position.y=.045; base.receiveShadow=true; g.add(base);
+
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(.055,.065,2.2,8),darkM);
+  pole.position.y=1.14; pole.castShadow=true; g.add(pole);
+
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.55,.82,.24),darkM);
+  head.position.y=2.09; head.castShadow=true; g.add(head);
+
+  const screen=new THREE.Mesh(new THREE.BoxGeometry(.38,.29,.025),screenM);
+  screen.position.set(0,2.12,.13); g.add(screen);
+  g.userData.screen = screen;
+
+  const logoBox=new THREE.Mesh(new THREE.BoxGeometry(.32,.06,.025),logoM);
+  logoBox.position.set(0,2.42,.13); g.add(logoBox);
+
+  const led=new THREE.Mesh(new THREE.SphereGeometry(.034,8,8),ledM);
+  led.position.set(0,2.53,.1); g.add(led);
+  g.userData.led = led;
+
+  g.userData.outletPos = new THREE.Vector3(0,1.72,-.13);
+  g.position.set(1.8,0,0);
+  return g;
+}
+const station = buildStation();
+scene.add(station);
+
+// ── Cable ─────────────────────────────────────────────────────────────────
+const outletWorld = station.userData.outletPos.clone().add(station.position);
+const portWorld   = car.userData.portPos.clone().add(car.position);
+
+const cableCurve = new THREE.CatmullRomCurve3([
+  outletWorld,
+  new THREE.Vector3(.9, 1.5, -.22),
+  new THREE.Vector3(.0, 1.1, -.5),
+  new THREE.Vector3(-.9, .75, -.7),
+  portWorld,
+]);
+const cableMesh = new THREE.Mesh(
+  new THREE.TubeGeometry(cableCurve, 28, .038, 8, false),
+  new THREE.MeshPhongMaterial({color:0x334155,shininess:30})
+);
+cableMesh.castShadow = true;
+scene.add(cableMesh);
+
+// ── Data flow particles ───────────────────────────────────────────────────
+const PARTICLE_COUNT = 90;
+const ptOffsets = Float32Array.from({length:PARTICLE_COUNT}, ()=>Math.random());
+const ptPositions = new Float32Array(PARTICLE_COUNT * 3);
+
+const ptGeo = new THREE.BufferGeometry();
+ptGeo.setAttribute('position', new THREE.BufferAttribute(ptPositions, 3));
+const ptMat = new THREE.PointsMaterial({
+  color:0x3b82f6, size:.07, transparent:true, opacity:.85, sizeAttenuation:true
+});
+const particles = new THREE.Points(ptGeo, ptMat);
+scene.add(particles);
+
+function updateParticles(speed=.12) {
+  for(let i=0;i<PARTICLE_COUNT;i++){
+    ptOffsets[i] = (ptOffsets[i] + speed * clock.getDelta_safe()) % 1;
+    const pt = cableCurve.getPoint(ptOffsets[i]);
+    ptPositions[i*3]=pt.x; ptPositions[i*3+1]=pt.y; ptPositions[i*3+2]=pt.z;
+  }
+  ptGeo.attributes.position.needsUpdate = true;
+}
+
+// ── Security nodes ────────────────────────────────────────────────────────
+const NODE_DEFS = [
+  {name:'identity',  color:0x7c3aed, pos:[-.5, 3.2, -1.6]},
+  {name:'integrity', color:0x0284c7, pos:[ .8, 3.4, -1.4]},
+  {name:'weaknesses',color:0xd97706, pos:[ 2.0, 3.1, -.8]},
+  {name:'behavior',  color:0x16a34a, pos:[ 2.2, 2.4,  .6]},
+];
+const nodeObjects = {};
+
+NODE_DEFS.forEach(def => {
+  const g = new THREE.Group();
+  g.position.set(...def.pos);
+
+  const coreMat = new THREE.MeshPhongMaterial({
+    color:def.color, shininess:120, specular:0xffffff,
+    transparent:true, opacity:.82,
+  });
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(.22), coreMat);
+  g.add(core);
+
+  const wireMat = new THREE.MeshBasicMaterial({
+    color:def.color, wireframe:true, transparent:true, opacity:.25
+  });
+  const wire = new THREE.Mesh(new THREE.OctahedronGeometry(.3), wireMat);
+  g.add(wire);
+
+  const ringGeo = new THREE.TorusGeometry(.42,.014,8,36);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color:def.color, transparent:true, opacity:.35
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = Math.PI/3; g.add(ring);
+
+  // Connecting line to station
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0,0,0),
+    new THREE.Vector3(
+      station.position.x - g.position.x,
+      (station.position.y + 1.2) - g.position.y,
+      station.position.z - g.position.z,
+    )
+  ]);
+  const lineMat = new THREE.LineBasicMaterial({
+    color:def.color, transparent:true, opacity:.2
+  });
+  g.add(new THREE.Line(lineGeo, lineMat));
+
+  g.userData = { name:def.name, color:def.color, coreMat, wireMat, ringMat, lineMat,
+                 baseY: def.pos[1], ring, state:'idle' };
+  scene.add(g);
+  nodeObjects[def.name] = g;
+});
+
+// ── Scan plane (integrity check effect) ─────────────────────────────────
+const scanMat = new THREE.MeshBasicMaterial({
+  color:0x38bdf8, transparent:true, opacity:.0, side:THREE.DoubleSide
+});
+const scanPlane = new THREE.Mesh(new THREE.PlaneGeometry(5,.04), scanMat);
+scanPlane.position.set(-2.3, 0, 0);
+scene.add(scanPlane);
+
