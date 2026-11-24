@@ -156,3 +156,42 @@ class ChargerSimulator:
         }
         return [all_cves[c] for c in self.attack.inject_cves if c in all_cves]
 
+    # ── Traffic sample ────────────────────────────────────────────────────
+
+    def get_traffic_sample(self) -> list:
+        normal = [
+            {"dst": "localhost", "port": 8080, "proto": "HEARTBEAT", "rate": 1},
+            {"dst": "localhost", "port": 8080, "proto": "STATUS",    "rate": 1},
+            {"dst": "localhost", "port": 8080, "proto": "METER",     "rate": 2},
+            {"dst": "127.0.0.1", "port": 8080, "proto": "OCPP",      "rate": 1},
+        ]
+
+        atk = self.attack.behavior_attack
+        tgt = self.attack.behavior_target
+        rate = self.attack.behavior_rate
+
+        if atk == "port_scan":
+            return normal + [
+                {"dst": tgt,        "port": 22,   "proto": "SSH",    "rate": rate},
+                {"dst": tgt,        "port": 3389, "proto": "RDP",    "rate": rate},
+                {"dst": tgt,        "port": 445,  "proto": "SMB",    "rate": rate},
+                {"dst": tgt,        "port": 9999, "proto": "SCAN",   "rate": rate * 2},
+            ]
+        elif atk == "c2":
+            return normal + [
+                {"dst": tgt,        "port": 4444, "proto": "UNKNOWN", "rate": rate},
+                {"dst": "attacker.local", "port": 8080, "proto": "HTTP", "rate": rate},
+            ]
+        elif atk == "dns_exfil":
+            return normal + [
+                {"dst": "8.8.8.8",  "port": 53,   "proto": "DNS",    "rate": rate},
+                {"dst": "1.1.1.1",  "port": 53,   "proto": "DNS",    "rate": rate * 3},
+            ]
+        elif atk == "burst":
+            return normal + [
+                {"dst": "localhost", "port": 8080, "proto": "FLOOD",  "rate": rate},
+                {"dst": "localhost", "port": 8080, "proto": "FLOOD",  "rate": rate},
+                {"dst": "localhost", "port": 8080, "proto": "FLOOD",  "rate": rate},
+            ]
+
+        return normal
