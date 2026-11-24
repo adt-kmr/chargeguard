@@ -1332,3 +1332,461 @@ const ro = new ResizeObserver(() => {
 ro.observe(canvas);
 </script>
 
+<!-- ── MAIN UI LOGIC ── -->
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const cfg = {
+  identity_attack: 'legitimate',
+  firmware_mode:   'good',
+  inject_cves:     [],
+  behavior_attack: 'normal',
+  behavior_rate:   50,
+  behavior_target: '192.168.1.254',
+};
+
+let sessionId   = null;
+let ws          = null;
+let timerIv     = null;
+let t0          = null;
+let lastReport  = null;
+let alertCount  = 0;
+
+// ── Preset definitions ──────────────────────────────────────────────────────
+const PRESETS = {
+  healthy: {
+    identity_attack:'legitimate', firmware_mode:'good',
+    inject_cves:[], behavior_attack:'normal',
+  },
+  tampered: {
+    identity_attack:'legitimate', firmware_mode:'tampered',
+    inject_cves:[], behavior_attack:'normal',
+  },
+  vulnerable: {
+    identity_attack:'legitimate', firmware_mode:'vulnerable',
+    inject_cves:[], behavior_attack:'normal',
+  },
+  compromised: {
+    identity_attack:'legitimate', firmware_mode:'good',
+    inject_cves:[], behavior_attack:'port_scan',
+  },
+};
+
+const FW_LABEL = { good:'v2.1.0', tampered:'v2.1.0 (tampered)', vulnerable:'v1.8.3' };
+
+// ── Preset apply ────────────────────────────────────────────────────────────
+function applyPreset(btn) {
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  const p = btn.dataset.preset;
+  if(p === 'custom') return;
+  const pre = PRESETS[p]; if(!pre) return;
+  Object.assign(cfg, pre);
+  // Sync UI
+  setRadio('rg-identity', pre.identity_attack);
+  setRadio('rg-firmware', pre.firmware_mode);
+  setRadio('rg-behavior', pre.behavior_attack);
+  document.querySelectorAll('.cve-label.checked').forEach(l=>{
+    l.classList.remove('checked');
+  });
+  cfg.inject_cves = [];
+  updateHUDFirmware();
+}
+window.applyPreset = applyPreset;
+
+function setRadio(groupId, value) {
+  const group = document.getElementById(groupId);
+  if(!group) return;
+  group.querySelectorAll('.radio-label').forEach(l => {
+    const isChecked = l.querySelector('input').value === value;
+    l.classList.toggle('checked', isChecked);
+    l.classList.toggle('attack-active', isChecked && value !== 'legitimate' && value !== 'good' && value !== 'normal');
+  });
+  if(groupId === 'rg-identity')  cfg.identity_attack  = value;
+  if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
+  if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
+}
+
+function selectRadio(groupId, label, value) {
+  document.getElementById(groupId).querySelectorAll('.radio-label').forEach(l=>{
+    l.classList.remove('checked','attack-active');
+  });
+  label.classList.add('checked');
+  const isAttack = value !== 'legitimate' && value !== 'good' && value !== 'normal';
+  if(isAttack) label.classList.add('attack-active');
+  if(groupId === 'rg-identity')  cfg.identity_attack  = value;
+  if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
+  if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
+  updateHUDFirmware();
+  // Auto-select custom preset
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
+  document.querySelector('[data-preset=custom]').classList.add('selected');
+}
+window.selectRadio = selectRadio;
+
+function toggleCVE(label, cveId) {
+  const checked = label.classList.toggle('checked');
+  if(checked) { if(!cfg.inject_cves.includes(cveId)) cfg.inject_cves.push(cveId); }
+  else cfg.inject_cves = cfg.inject_cves.filter(c=>c!==cveId);
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
+  document.querySelector('[data-preset=custom]').classList.add('selected');
+}
+window.toggleCVE = toggleCVE;
+
+function updateSlider(input, valId, unit='') {
+  const v = input.value;
+  document.getElementById(valId).textContent = v + unit;
+  const pct = ((v - input.min)/(input.max - input.min)*100).toFixed(1) + '%';
+  input.style.setProperty('--pct', pct);
+  if(valId === 'rateVal') cfg.behavior_rate = parseInt(v);
+}
+window.updateSlider = updateSlider;
+
+function updateHUDFirmware() {
+  document.getElementById('hudFirmware').textContent =
+    FW_LABEL[cfg.firmware_mode] || cfg.firmware_mode;
+  const atk = cfg.identity_attack;
+  document.getElementById('hudDevice').textContent =
+    atk === 'unknown' ? 'ROGUE-999' :
+    atk === 'clone'   ? 'CG-001 (clone)' :
+    'CG-CHARGER-001';
+}
+
+// ── Verification ────────────────────────────────────────────────────────────
+async function startVerification() {
+  if(ws){ ws.close(); ws=null; }
+  stopTimer();
+  resetUI();
+
+  document.getElementById('btnVerify').disabled = true;
+  setStatusPill('running', 'SCANNING');
+
+  if(window.sceneCtrl) window.sceneCtrl.reset();
+
+  // Create session
+  const body = {
+    identity_attack:  cfg.identity_attack,
+    firmware_mode:    cfg.firmware_mode,
+    inject_cves:      cfg.inject_cves,
+    behavior_attack:  cfg.behavior_attack,
+    behavior_target:  document.getElementById('targetInput').value || '192.168.1.254',
+    behavior_rate:    cfg.behavior_rate,
+  };
+
+  const res  = await fetch('/api/verify', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  });
+  const { session_id } = await res.json();
+  sessionId = session_id;
+  document.getElementById('sessionDisplay').textContent =
+    'Session: ' + session_id.slice(0,8) + '…';
+
+  // Start timer
+  t0 = Date.now();
+  document.getElementById('hudTimerWrap').style.opacity = '1';
+  timerIv = setInterval(()=>{
+    const e = (Date.now()-t0)/1000;
+    document.getElementById('hudTimer').textContent = e.toFixed(1) + 's';
+    const pct = Math.min(e/5*100,100).toFixed(1)+'%';
+    document.getElementById('timerBarFill').style.width = pct;
+  }, 80);
+
+  // WebSocket
+  ws = new WebSocket(`ws://${location.host}/ws/${session_id}`);
+  ws.onmessage = e => handleEvent(JSON.parse(e.data));
+  ws.onclose   = () => { document.getElementById('btnVerify').disabled=false; stopTimer(); };
+  ws.onerror   = () => {
+    setStatusPill('standby','ERROR');
+    addAlert('crit','WebSocket error — is the server running?');
+    document.getElementById('btnVerify').disabled=false;
+  };
+}
+window.startVerification = startVerification;
+
+function stopTimer() {
+  if(timerIv){ clearInterval(timerIv); timerIv=null; }
+}
+
+// ── Event handler ────────────────────────────────────────────────────────────
+const CHECK_ICONS = {
+  identity:'🔑', integrity:'🔏', weaknesses:'🔍', behavior:'📡'
+};
+
+function handleEvent(ev) {
+  if(ev.event === 'check_start') {
+    setCheckRow(ev.check, 'active',
+      '<span class="spin"></span> Checking…', '');
+    setResultCard(ev.check, 'active', 'RUNNING');
+    if(window.sceneCtrl) {
+      window.sceneCtrl.activateNode(ev.check);
+      if(ev.check === 'integrity') window.sceneCtrl.triggerScan();
+    }
+    addAlert('info', `[${ev.check.toUpperCase()}] Check started at ${ev.t.toFixed(2)}s`);
+    updateTrafficMonitor(ev.check);
+  }
+
+  if(ev.event === 'check_done') {
+    setCheckRow(ev.check, ev.status, ev.detail, ev.t.toFixed(2)+'s');
+    setResultCard(ev.check, ev.status, ev.status.toUpperCase(), ev.t.toFixed(2)+'s');
+    if(window.sceneCtrl) window.sceneCtrl.resolveNode(ev.check, ev.status);
+    const lvl = ev.status === 'fail' ? 'crit' : ev.status === 'warning' ? 'warn' : 'info';
+    addAlert(lvl, `[${ev.check.toUpperCase()}] ${ev.status.toUpperCase()} — ${ev.detail.slice(0,70)}`);
+
+    // Show CVEs in traffic monitor
+    if(ev.check==='weaknesses' && ev.evidence?.cves?.length) {
+      updateCVEPanel(ev.evidence.cves);
+    }
+  }
+
+  if(ev.event === 'verdict') {
+    stopTimer();
+    document.getElementById('hudTimerWrap').style.opacity = '0.6';
+    setVerdict(ev.verdict, ev.reason, ev.score);
+    setStatusPill('done-'+ev.verdict, ev.verdict.toUpperCase());
+    if(window.sceneCtrl) window.sceneCtrl.setVerdict(ev.verdict);
+    const lvl = ev.verdict==='green'?'info': ev.verdict==='amber'?'warn':'crit';
+    addAlert(lvl, `VERDICT: ${ev.verdict.toUpperCase()} (score ${ev.score}/100) — ${ev.reason.slice(0,80)}`);
+  }
+
+  if(ev.event === 'report_ready') {
+    lastReport = ev;
+    document.getElementById('btnEvidence').classList.add('visible');
+    updateEvidencePanel(ev);
+  }
+}
+
+// ── UI update helpers ────────────────────────────────────────────────────────
+function resetUI() {
+  // Ring
+  setRing(0, '#94a3b8', 'STANDBY', '—');
+  document.getElementById('verdictText').textContent = 'Verification in progress…';
+  // Check rows
+  ['identity','integrity','weaknesses','behavior'].forEach(n=>{
+    document.getElementById('cr-'+n).className='check-row';
+    document.getElementById('cd-'+n).textContent = CHECK_ICONS[n];
+    document.getElementById('cdet-'+n).textContent = getDefaultDetail(n);
+    document.getElementById('ctim-'+n).textContent = '';
+    setResultCard(n, '', 'PENDING');
+  });
+  document.getElementById('btnEvidence').classList.remove('visible');
+  document.getElementById('trafficMonitor').innerHTML = '';
+}
+
+function getDefaultDetail(n) {
+  return {identity:'TPM challenge-response',integrity:'Hash + vendor signature',
+    weaknesses:'Pre-audit DB lookup',behavior:'Traffic baseline check'}[n]||'';
+}
+
+function setCheckRow(name, status, detail, time) {
+  const row = document.getElementById('cr-'+name);
+  if(!row) return;
+  row.className = 'check-row ' + status;
+  const icons = {pass:'✓',fail:'✗',warning:'!',active:CHECK_ICONS[name]};
+  document.getElementById('cd-'+name).innerHTML =
+    status==='active' ? '<span class="spin"></span>' : (icons[status]||CHECK_ICONS[name]);
+  document.getElementById('cdet-'+name).innerHTML = detail;
+  document.getElementById('ctim-'+name).textContent = time ? time : '';
+}
+
+function setResultCard(name, status, label, time='') {
+  const card = document.getElementById('rc-'+name); if(!card) return;
+  card.className = 'result-card '+(status||'');
+  card.querySelector('.rc-status').textContent = label;
+  const tEl = card.querySelector('.rc-time');
+  if(tEl) tEl.textContent = time; else {
+    const sp=document.createElement('span');
+    sp.className='rc-time'; sp.textContent=time; card.appendChild(sp);
+  }
+  // Anime.js pop
+  if(typeof anime!=='undefined' && status && status!=='active') {
+    anime({ targets:card, scale:[1.05,1], duration:300, easing:'spring(1,80,10,0)' });
+  }
+}
+
+function setVerdict(v, reason, score) {
+  const circ = 2*Math.PI*54;
+  const pct = score/100;
+  const colors = {green:'#16a34a', amber:'#d97706', red:'#dc2626'};
+  const c = colors[v] || '#94a3b8';
+  const fill = document.getElementById('ringFill');
+  fill.style.stroke = c;
+  fill.style.strokeDashoffset = circ*(1-pct);
+  document.getElementById('ringLabel').textContent = v.toUpperCase();
+  document.getElementById('ringScore').textContent = score+'/100';
+  document.getElementById('ringScore').style.color = c;
+  document.getElementById('verdictText').textContent = reason;
+  if(typeof anime!=='undefined') {
+    anime({ targets:'#ringScore', scale:[1.4,1], duration:600,
+      easing:'spring(1,70,8,0)' });
+  }
+}
+
+function setRing(score, color, label, scoreText) {
+  const circ = 2*Math.PI*54;
+  const fill = document.getElementById('ringFill');
+  fill.style.stroke = color;
+  fill.style.strokeDashoffset = circ*(1 - score/100);
+  document.getElementById('ringLabel').textContent = label;
+  document.getElementById('ringScore').textContent = scoreText;
+  document.getElementById('ringScore').style.color = color;
+}
+
+function setStatusPill(cls, text) {
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill '+cls;
+  document.getElementById('statusText').textContent = text;
+  document.getElementById('pulseDot').className = 'pulse-dot'+(cls==='running'?' pulsing':'');
+}
+
+function addAlert(type, msg) {
+  const list = document.getElementById('alertList');
+  const now = new Date().toTimeString().slice(0,8);
+  const div = document.createElement('div');
+  div.className = 'alert-item '+type;
+  div.innerHTML = `<span class="alert-time">${now}</span><span>${msg}</span>`;
+  list.insertBefore(div, list.firstChild);
+  while(list.children.length > 12) list.removeChild(list.lastChild);
+}
+
+function updateTrafficMonitor(checkName) {
+  const mon = document.getElementById('trafficMonitor');
+  const trafficMap = {
+    behavior: [
+      {proto:'HEARTBEAT',dst:'localhost:8080',rate:'1 msg/s',atk:false},
+      {proto:'STATUS',dst:'localhost:8080',rate:'1 msg/s',atk:false},
+      {proto:'OCPP',dst:'127.0.0.1:8080',rate:'1 msg/s',atk:false},
+    ]
+  };
+
+  // Add attack traffic if behavior check
+  if(checkName==='behavior' && cfg.behavior_attack !== 'normal') {
+    const target = document.getElementById('targetInput').value||'192.168.1.254';
+    const rate = cfg.behavior_rate;
+    const attackTraffic = {
+      port_scan: [{proto:'SSH',dst:target+':22',rate:rate+' msg/s',atk:true},
+                  {proto:'RDP',dst:target+':3389',rate:rate+' msg/s',atk:true},
+                  {proto:'SCAN',dst:target+':9999',rate:(rate*2)+' msg/s',atk:true}],
+      c2:        [{proto:'UNKNOWN',dst:target+':4444',rate:rate+' msg/s',atk:true}],
+      dns_exfil: [{proto:'DNS',dst:'8.8.8.8:53',rate:rate+' msg/s',atk:true},
+                  {proto:'DNS',dst:'1.1.1.1:53',rate:(rate*3)+' msg/s',atk:true}],
+      burst:     [{proto:'FLOOD',dst:'localhost:8080',rate:rate+' msg/s',atk:true}],
+    };
+    const extra = attackTraffic[cfg.behavior_attack] || [];
+    const rows = [...(trafficMap.behavior||[]), ...extra];
+    mon.innerHTML = rows.map(r=>`
+      <div class="traffic-row">
+        <span class="traffic-proto ${r.atk?'proto-attack':'proto-normal'}">${r.proto}</span>
+        <span class="traffic-dst">${r.dst}</span>
+        <span class="traffic-rate">${r.rate}</span>
+      </div>
+    `).join('');
+  } else if(trafficMap[checkName]) {
+    mon.innerHTML = trafficMap[checkName].map(r=>`
+      <div class="traffic-row">
+        <span class="traffic-proto proto-normal">${r.proto}</span>
+        <span class="traffic-dst">${r.dst}</span>
+        <span class="traffic-rate">${r.rate}</span>
+      </div>
+    `).join('');
+  }
+}
+
+function updateCVEPanel(cves) {
+  const ep = document.getElementById('evidencePanel');
+  const cveHTML = cves.map(c=>`
+    <div class="cve-ev-item">
+      <div class="cve-ev-id">${c.id} — <span class="cve-sev sev-${c.severity}">${c.severity} CVSS ${c.cvss}</span></div>
+      <div class="cve-ev-desc">${c.component}: ${c.description}</div>
+    </div>
+  `).join('');
+  ep.querySelector('.cve-ev-list')?.remove();
+  const wrap=document.createElement('div');
+  wrap.className='cve-ev-list'; wrap.innerHTML=cveHTML;
+  ep.appendChild(wrap);
+}
+
+function updateEvidencePanel(ev) {
+  if(!ev) return;
+  const ep = document.getElementById('evidencePanel');
+  const vb = {green:'vb-green',amber:'vb-amber',red:'vb-red'}[lastReport?.verdict||'']||'vb-neutral';
+  // Will be populated when report JSON is fetched
+  fetch(ev.download).then(r=>r.json()).then(data=>{
+    const c = {green:'#16a34a',amber:'#d97706',red:'#dc2626'}[data.verdict]||'#2563eb';
+    ep.innerHTML = `
+      <div class="verdict-banner ${vb}">${data.verdict?.toUpperCase()} — Score: ${data.score}/100</div>
+      <div class="ev-row-b"><span class="ev-k">Session</span><span class="ev-v">${data.session_id?.slice(0,8)}…</span></div>
+      <div class="ev-row-b"><span class="ev-k">Time</span><span class="ev-v">${data.generated_at?.slice(0,19)}</span></div>
+      <div class="ev-row-b"><span class="ev-k">Mode</span><span class="ev-v">${data.charger_mode}</span></div>
+      <div class="ev-row-b"><span class="ev-k">Sig</span><span class="ev-v">${data.signature?.slice(0,18)}…</span></div>
+    `;
+    // Update compliance list
+    const cl = document.getElementById('complianceList');
+    const controls = data.compliance_controls || {};
+    const allCtrls = Object.values(controls).flat().slice(0,8);
+    cl.innerHTML = allCtrls.map(c=>`
+      <div class="comp-item">
+        <div class="comp-std">${c.standard} · ${c.control_id}</div>
+        <div class="comp-title">${c.title}</div>
+      </div>
+    `).join('');
+  });
+}
+
+// ── Evidence modal ────────────────────────────────────────────────────────────
+async function openModal() {
+  if(!lastReport) return;
+  document.getElementById('modalOverlay').classList.add('open');
+  document.getElementById('btnDownload').href = lastReport.download;
+  document.getElementById('modalBody').innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text3)">Loading…</div>';
+
+  const data = await fetch(lastReport.download).then(r=>r.json());
+  const vColor = {green:'#16a34a',amber:'#d97706',red:'#dc2626'}[data.verdict]||'#2563eb';
+  const vbCls  = {green:'vb-green',amber:'vb-amber',red:'vb-red'}[data.verdict]||'vb-neutral';
+
+  let html = `<div class="verdict-banner ${vbCls}" style="font-size:.95rem;margin-bottom:1rem">
+    ${data.verdict?.toUpperCase()} — Score ${data.score}/100
+  </div>
+  <div class="ev-row-b"><span class="ev-k">Session ID</span><span class="ev-v">${data.session_id}</span></div>
+  <div class="ev-row-b"><span class="ev-k">Generated</span><span class="ev-v">${data.generated_at}</span></div>
+  <div class="ev-row-b"><span class="ev-k">Charger Mode</span><span class="ev-v">${data.charger_mode}</span></div>
+  <div class="ev-row-b" style="margin-bottom:.75rem"><span class="ev-k">Signature</span>
+    <span class="ev-v">${data.signature?.slice(0,24)}…</span></div>`;
+
+  for(const [name,res] of Object.entries(data.check_details||{})) {
+    const sc={pass:'#16a34a',fail:'#dc2626',warning:'#d97706'}[res.status]||'#64748b';
+    html += `<div style="margin:0.6rem 0;padding:.5rem .6rem;border-radius:7px;
+      border:1px solid var(--border);background:var(--surface2)">
+      <div style="font-size:.7rem;font-weight:700;color:${sc};margin-bottom:4px">
+        ${name.toUpperCase()} — ${res.status?.toUpperCase()}  (${res.timing}s)
+      </div>
+      <div style="font-size:.72rem;color:var(--text2)">${res.detail}</div>`;
+    if(res.evidence?.cves?.length) {
+      html += res.evidence.cves.map(c=>
+        `<div style="font-size:.65rem;margin-top:4px;color:var(--text3)">
+          ${c.id} (${c.severity} CVSS ${c.cvss}) — ${c.component}
+        </div>`).join('');
+    }
+    const ctrl = (res.compliance||[]).slice(0,2);
+    if(ctrl.length) html += ctrl.map(c=>
+      `<div style="font-size:.62rem;color:var(--blue);margin-top:3px">
+        ${c.standard} ${c.control_id}: ${c.title}
+      </div>`).join('');
+    html += '</div>';
+  }
+
+  document.getElementById('modalBody').innerHTML = html;
+}
+window.openModal = openModal;
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+window.closeModal = closeModal;
+function closeModalOutside(e) {
+  if(e.target===document.getElementById('modalOverlay')) closeModal();
+}
+window.closeModalOutside = closeModalOutside;
+
+// Init slider visual state
+document.getElementById('rateSlider').style.setProperty('--pct','25%');
+</script>
+</body>
+</html>
