@@ -1,0 +1,203 @@
+{
+  "measured_at": "2026-11-24T10:25:07+00:00",
+  "host": {
+    "cpu": "Intel(R) Core(TM) i9-14900HX",
+    "machine": "AMD64",
+    "logical_cpus": 32,
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.10",
+    "cryptography": "46.0.7"
+  },
+  "method": "time.perf_counter around each call; warm-up 20 calls; single process, single thread",
+  "components": {
+    "identity_nonce_sign_and_verify_ed25519": {
+      "runs": 1000,
+      "p50_ms": 0.0861,
+      "p95_ms": 0.0894,
+      "p99_ms": 0.0989,
+      "max_ms": 0.1043,
+      "mean_ms": 0.0866
+    },
+    "identity_registry_lookup_sqlite": {
+      "runs": 1000,
+      "p50_ms": 1.5215,
+      "p95_ms": 1.771,
+      "p99_ms": 2.1576,
+      "max_ms": 11.9501,
+      "mean_ms": 1.5527
+    },
+    "integrity_registry_lookup_sqlite": {
+      "runs": 1000,
+      "p50_ms": 1.4952,
+      "p95_ms": 1.7127,
+      "p99_ms": 1.8522,
+      "max_ms": 6.9527,
+      "mean_ms": 1.5109
+    },
+    "integrity_vendor_sig_verify_ed25519": {
+      "runs": 1000,
+      "p50_ms": 0.0628,
+      "p95_ms": 0.071,
+      "p99_ms": 0.0866,
+      "max_ms": 0.1418,
+      "mean_ms": 0.0633
+    },
+    "reference_same_lookup_persistent_connection": {
+      "runs": 1000,
+      "p50_ms": 0.0054,
+      "p95_ms": 0.0063,
+      "p99_ms": 0.0182,
+      "max_ms": 0.0631,
+      "mean_ms": 0.0057
+    },
+    "weakness_cve_lookup_by_hash_sqlite": {
+      "runs": 1000,
+      "p50_ms": 0.5088,
+      "p95_ms": 0.6716,
+      "p99_ms": 0.7735,
+      "max_ms": 1.1165,
+      "mean_ms": 0.5287
+    },
+    "behavior_baseline_normal_traffic": {
+      "runs": 1000,
+      "p50_ms": 0.02,
+      "p95_ms": 0.0215,
+      "p99_ms": 0.023,
+      "max_ms": 0.0271,
+      "mean_ms": 0.0198
+    },
+    "behavior_baseline_c2_traffic": {
+      "runs": 1000,
+      "p50_ms": 0.0471,
+      "p95_ms": 0.0495,
+      "p99_ms": 0.0536,
+      "max_ms": 0.2091,
+      "mean_ms": 0.0475
+    },
+    "verdict_fusion": {
+      "runs": 1000,
+      "p50_ms": 0.0003,
+      "p95_ms": 0.0004,
+      "p99_ms": 0.0004,
+      "max_ms": 0.0038,
+      "mean_ms": 0.0003
+    },
+    "verdict_sign_ed25519": {
+      "runs": 1000,
+      "p50_ms": 0.164,
+      "p95_ms": 0.1863,
+      "p99_ms": 0.2074,
+      "max_ms": 1.7243,
+      "mean_ms": 0.1688
+    },
+    "verdict_verify_ed25519": {
+      "runs": 1000,
+      "p50_ms": 0.209,
+      "p95_ms": 0.2296,
+      "p99_ms": 0.2508,
+      "max_ms": 0.4259,
+      "mean_ms": 0.2118
+    },
+    "attestation_quote_software_tpm_p256": {
+      "runs": 1000,
+      "p50_ms": 0.0305,
+      "p95_ms": 0.0319,
+      "p99_ms": 0.0356,
+      "max_ms": 0.0432,
+      "mean_ms": 0.0307
+    },
+    "attestation_verify_quote_p256": {
+      "runs": 1000,
+      "p50_ms": 0.0659,
+      "p95_ms": 0.0702,
+      "p99_ms": 0.0777,
+      "max_ms": 0.0844,
+      "mean_ms": 0.0665
+    }
+  },
+  "end_to_end": {
+    "healthy": {
+      "verdict": [
+        "green"
+      ],
+      "wall": {
+        "runs": 5,
+        "p50_ms": 3015.7986,
+        "p95_ms": 3046.7124,
+        "p99_ms": 3046.7124,
+        "max_ms": 3046.7124,
+        "mean_ms": 3018.6166
+      },
+      "check_done_at_s": {
+        "identity": 0.625,
+        "integrity": 1.281,
+        "weaknesses": 1.984,
+        "behavior": 3.0
+      }
+    },
+    "tampered": {
+      "verdict": [
+        "red"
+      ],
+      "wall": {
+        "runs": 5,
+        "p50_ms": 2712.9195,
+        "p95_ms": 2720.8043,
+        "p99_ms": 2720.8043,
+        "max_ms": 2720.8043,
+        "mean_ms": 2709.152
+      },
+      "check_done_at_s": {
+        "identity": 0.625,
+        "integrity": 0.984,
+        "weaknesses": 1.703,
+        "behavior": 2.718
+      }
+    },
+    "vulnerable": {
+      "verdict": [
+        "amber"
+      ],
+      "wall": {
+        "runs": 5,
+        "p50_ms": 3004.9754,
+        "p95_ms": 3027.8098,
+        "p99_ms": 3027.8098,
+        "max_ms": 3027.8098,
+        "mean_ms": 3010.3353
+      },
+      "check_done_at_s": {
+        "identity": 0.61,
+        "integrity": 1.282,
+        "weaknesses": 2.0,
+        "behavior": 3.0
+      }
+    },
+    "compromised": {
+      "verdict": [
+        "red"
+      ],
+      "wall": {
+        "runs": 5,
+        "p50_ms": 3018.5634,
+        "p95_ms": 3037.0074,
+        "p99_ms": 3037.0074,
+        "max_ms": 3037.0074,
+        "mean_ms": 3015.0236
+      },
+      "check_done_at_s": {
+        "identity": 0.609,
+        "integrity": 1.281,
+        "weaknesses": 2.0,
+        "behavior": 3.031
+      }
+    }
+  },
+  "simulated_delay_s": {
+    "identity": 0.6,
+    "integrity": 0.65,
+    "weaknesses": 0.7,
+    "behavior": 1.0,
+    "note": "fixed asyncio.sleep() calls in checks/*.py standing in for TPM and network I/O"
+  }
+}
