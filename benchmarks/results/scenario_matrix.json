@@ -4,7 +4,7 @@
     "verdicts": [
       {
         "verdict": "green",
-        "t": 5.547,
+        "t": 5.453,
         "mid_session": false
       }
     ],
@@ -12,28 +12,28 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 25.602
+        "compute_ms": 44.23
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 4.945
+        "compute_ms": 6.769
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 17.258
+        "compute_ms": 6.07
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.9
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.251
       }
     },
     "enforcement": null,
-    "report": "/api/report/6b6b5481-f0c0-48ce-bb91-7166cd199a94",
-    "ocpp_frames": 36,
-    "flows": 23,
+    "report": "/api/report/c952c48d-ac50-4f8d-b771-b090e4a59045",
+    "ocpp_frames": 38,
+    "flows": 22,
     "session": {
       "state": "offline",
       "energy_kwh": 0.02,
@@ -50,7 +50,7 @@
     "verdicts": [
       {
         "verdict": "red",
-        "t": 5.438,
+        "t": 5.422,
         "mid_session": false
       }
     ],
@@ -58,22 +58,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 32.382
+        "compute_ms": 17.248
       },
       "integrity": {
         "status": "fail",
         "detail": "Firmware 2.1.0 hash 7fd9c7dd7ee0\u2026 is not in the vendor registry \u2014 image modified after signing.",
-        "compute_ms": 17.604
+        "compute_ms": 5.986
       },
       "weaknesses": {
         "status": "warning",
         "detail": "Unaudited firmware: no audit record exists for this hash, so its weaknesses are unknown.",
-        "compute_ms": 19.072
+        "compute_ms": 6.325
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 1.264
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.293
       }
     },
     "enforcement": {
@@ -81,9 +81,9 @@
       "when": null,
       "steps": null
     },
-    "report": "/api/report/f0df6f42-dc27-4d95-9596-ffdd31860edb",
-    "ocpp_frames": 16,
-    "flows": 22,
+    "report": "/api/report/148e31b1-616a-4503-b098-967a2987179c",
+    "ocpp_frames": 18,
+    "flows": 21,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -100,7 +100,7 @@
     "verdicts": [
       {
         "verdict": "amber",
-        "t": 5.438,
+        "t": 5.453,
         "mid_session": false
       }
     ],
@@ -108,27 +108,27 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 35.279
+        "compute_ms": 19.725
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 1.8.3 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 19.029
+        "compute_ms": 7.748
       },
       "weaknesses": {
         "status": "warning",
         "detail": "5 known CVE(s) in this firmware (2 critical). Authentic but vulnerable.",
-        "compute_ms": 20.367
+        "compute_ms": 6.03
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.746
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.342
       }
     },
     "enforcement": null,
-    "report": "/api/report/49be1838-7e2a-4d90-a395-c676805706eb",
-    "ocpp_frames": 36,
+    "report": "/api/report/b7950f1e-402f-475c-a8de-5af98e8858b1",
+    "ocpp_frames": 38,
     "flows": 21,
     "session": {
       "state": "offline",
@@ -146,12 +146,12 @@
     "verdicts": [
       {
         "verdict": "green",
-        "t": 5.391,
+        "t": 5.453,
         "mid_session": false
       },
       {
         "verdict": "red",
-        "t": 14.391,
+        "t": 14.531,
         "mid_session": true
       }
     ],
@@ -159,22 +159,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 15.252
+        "compute_ms": 22.787
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 7.337
+        "compute_ms": 6.817
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 4.081
+        "compute_ms": 6.49
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.18
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.375
       }
     },
     "enforcement": {
@@ -185,9 +185,9 @@
         "Charger CG-CHARGER-001 quarantined; OCPP connection closed (1008)."
       ]
     },
-    "report": "/api/report/775bc9ca-9392-48cc-89ef-272e88ebe1d0",
-    "ocpp_frames": 36,
-    "flows": 77,
+    "report": "/api/report/cf7ec019-2c0b-41a8-a7b3-5fef319613b1",
+    "ocpp_frames": 38,
+    "flows": 79,
     "session": {
       "state": "offline",
       "energy_kwh": 0.016,
@@ -204,7 +204,7 @@
     "verdicts": [
       {
         "verdict": "red",
-        "t": 5.438,
+        "t": 5.64,
         "mid_session": false
       }
     ],
@@ -212,22 +212,22 @@
       "identity": {
         "status": "fail",
         "detail": "Nonce signature does not match the enrolled device key \u2014 cloned or spoofed charger.",
-        "compute_ms": 7.781
+        "compute_ms": 7.629
       },
       "integrity": {
         "status": "fail",
         "detail": "Firmware measurement cannot be trusted: it was not delivered under a valid attestation from the enrolled device.",
-        "compute_ms": 0.009
+        "compute_ms": 0.007
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 8.75
+        "compute_ms": 3.53
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.439
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.208
       }
     },
     "enforcement": {
@@ -235,9 +235,9 @@
       "when": null,
       "steps": null
     },
-    "report": "/api/report/ba362612-6389-4e29-8a86-8af02c086ddb",
-    "ocpp_frames": 16,
-    "flows": 21,
+    "report": "/api/report/e296d918-e80d-446c-9f49-07187675470b",
+    "ocpp_frames": 18,
+    "flows": 22,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -254,7 +254,7 @@
     "verdicts": [
       {
         "verdict": "red",
-        "t": 5.453,
+        "t": 5.61,
         "mid_session": false
       }
     ],
@@ -262,22 +262,22 @@
       "identity": {
         "status": "fail",
         "detail": "Device 'ROGUE-999' is not enrolled \u2014 unknown or rogue charger.",
-        "compute_ms": 5.446
+        "compute_ms": 7.764
       },
       "integrity": {
         "status": "fail",
         "detail": "Firmware measurement cannot be trusted: it was not delivered under a valid attestation from the enrolled device.",
-        "compute_ms": 0.014
+        "compute_ms": 0.006
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 3.255
+        "compute_ms": 4.393
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.154
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.253
       }
     },
     "enforcement": {
@@ -285,9 +285,9 @@
       "when": null,
       "steps": null
     },
-    "report": "/api/report/6a53a3e7-44da-489e-ab47-8f0a43908918",
-    "ocpp_frames": 16,
-    "flows": 21,
+    "report": "/api/report/5ec97ae4-a22e-4033-9216-2d184d27dd3c",
+    "ocpp_frames": 18,
+    "flows": 19,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -304,7 +304,7 @@
     "verdicts": [
       {
         "verdict": "red",
-        "t": 5.453,
+        "t": 5.485,
         "mid_session": false
       }
     ],
@@ -312,22 +312,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 14.966
+        "compute_ms": 34.404
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 4.83
+        "compute_ms": 20.179
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 6.45
+        "compute_ms": 17.056
       },
       "behavior": {
         "status": "fail",
         "detail": "Anomalous behaviour: c2-pattern, unauthorized-extension, unexpected-peer.",
-        "compute_ms": 0.553
+        "compute_ms": 1.081
       }
     },
     "enforcement": {
@@ -337,9 +337,9 @@
         "Charger CG-CHARGER-001 quarantined; OCPP connection closed (1008)."
       ]
     },
-    "report": "/api/report/a4750372-3a13-4a27-989d-b02eed892d7f",
-    "ocpp_frames": 12,
-    "flows": 28,
+    "report": "/api/report/d21408cd-f169-48ed-8d5c-d0e29d0df406",
+    "ocpp_frames": 14,
+    "flows": 27,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -356,7 +356,7 @@
     "verdicts": [
       {
         "verdict": "red",
-        "t": 5.453,
+        "t": 5.516,
         "mid_session": false
       }
     ],
@@ -364,22 +364,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 31.24
+        "compute_ms": 36.438
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 21.781
+        "compute_ms": 18.49
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 18.484
+        "compute_ms": 18.986
       },
       "behavior": {
         "status": "fail",
         "detail": "Anomalous behaviour: exfiltration, rate-exceeded, unexpected-peer.",
-        "compute_ms": 1.036
+        "compute_ms": 1.296
       }
     },
     "enforcement": {
@@ -389,9 +389,9 @@
         "Charger CG-CHARGER-001 quarantined; OCPP connection closed (1008)."
       ]
     },
-    "report": "/api/report/a4a284be-b870-40d5-b8db-7f2b2bb50f7f",
-    "ocpp_frames": 10,
-    "flows": 319,
+    "report": "/api/report/26dec8df-d9cd-4fec-910a-276439fae52c",
+    "ocpp_frames": 12,
+    "flows": 320,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -408,12 +408,12 @@
     "verdicts": [
       {
         "verdict": "green",
-        "t": 5.438,
+        "t": 5.5,
         "mid_session": false
       },
       {
         "verdict": "red",
-        "t": 6.438,
+        "t": 6.531,
         "mid_session": true
       }
     ],
@@ -421,22 +421,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 32.507
+        "compute_ms": 45.732
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 19.097
+        "compute_ms": 18.99
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 17.034
+        "compute_ms": 18.556
       },
       "behavior": {
         "status": "pass",
-        "detail": "21 observed messages and flows match the charger baseline.",
-        "compute_ms": 2.185
+        "detail": "24 observed messages and flows match the charger baseline.",
+        "compute_ms": 2.848
       }
     },
     "enforcement": {
@@ -446,9 +446,9 @@
         "RemoteStopTransaction tx 41001: Accepted"
       ]
     },
-    "report": "/api/report/bcca1c75-bfe5-41ac-bbf1-0a06085dde91",
-    "ocpp_frames": 230,
-    "flows": 12,
+    "report": "/api/report/4dabfcf0-aeec-45ff-9ef4-acdbf02e75ff",
+    "ocpp_frames": 252,
+    "flows": 14,
     "session": {
       "state": "offline",
       "energy_kwh": 0.0,
@@ -465,12 +465,12 @@
     "verdicts": [
       {
         "verdict": "green",
-        "t": 5.438,
+        "t": 5.593,
         "mid_session": false
       },
       {
         "verdict": "red",
-        "t": 14.5,
+        "t": 14.656,
         "mid_session": true
       }
     ],
@@ -478,22 +478,22 @@
       "identity": {
         "status": "pass",
         "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
-        "compute_ms": 33.433
+        "compute_ms": 21.889
       },
       "integrity": {
         "status": "pass",
         "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
-        "compute_ms": 19.195
+        "compute_ms": 4.181
       },
       "weaknesses": {
         "status": "pass",
         "detail": "No known CVEs recorded for this firmware in the audit cache.",
-        "compute_ms": 14.862
+        "compute_ms": 3.317
       },
       "behavior": {
         "status": "pass",
-        "detail": "6 observed messages and flows match the charger baseline.",
-        "compute_ms": 0.646
+        "detail": "7 observed messages and flows match the charger baseline.",
+        "compute_ms": 0.256
       }
     },
     "enforcement": {
@@ -504,9 +504,9 @@
         "Charger CG-CHARGER-001 quarantined; OCPP connection closed (1008)."
       ]
     },
-    "report": "/api/report/de776cda-0881-497a-8748-fe9cb9f034b6",
-    "ocpp_frames": 40,
-    "flows": 21,
+    "report": "/api/report/5dfdff06-05ac-4d03-897d-9230f281add2",
+    "ocpp_frames": 42,
+    "flows": 24,
     "session": {
       "state": "offline",
       "energy_kwh": 0.016,
@@ -517,5 +517,57 @@
     "expected": "red",
     "pass": true,
     "charger_exit": 0
+  },
+  {
+    "scenario": "quishing",
+    "verdicts": [
+      {
+        "verdict": "red",
+        "t": 5.547,
+        "mid_session": false
+      }
+    ],
+    "checks": {
+      "identity": {
+        "status": "pass",
+        "detail": "'CG-CHARGER-001' proved possession of its enrolled device key and TPM attestation key.",
+        "compute_ms": 36.289
+      },
+      "integrity": {
+        "status": "pass",
+        "detail": "Firmware 2.1.0 is vendor-signed, registered and matches measured boot (PCR0).",
+        "compute_ms": 21.479
+      },
+      "weaknesses": {
+        "status": "pass",
+        "detail": "No known CVEs recorded for this firmware in the audit cache.",
+        "compute_ms": 16.986
+      },
+      "behavior": {
+        "status": "fail",
+        "detail": "Anomalous behaviour: malicious-payment-qr.",
+        "compute_ms": 0.929
+      }
+    },
+    "enforcement": {
+      "action": "isolate",
+      "when": "plug-in",
+      "steps": [
+        "Charger CG-CHARGER-001 quarantined; OCPP connection closed (1008)."
+      ]
+    },
+    "report": "/api/report/054167f8-5515-4a3f-996e-7823f6a2eefc",
+    "ocpp_frames": 12,
+    "flows": 20,
+    "session": {
+      "state": "offline",
+      "energy_kwh": 0.0,
+      "stop_reason": null
+    },
+    "advisory_engine": "rule-based (grounded templates)",
+    "final_verdict": "red",
+    "expected": "red",
+    "pass": true,
+    "charger_exit": 2
   }
 ]

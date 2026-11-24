@@ -150,6 +150,8 @@ class Baseline:
                 anomalies.append(Anomaly("unauthorized-extension",
                                          f"DataTransfer to unapproved vendor extension '{f.get('vendor_id')}'",
                                          dst, "critical", {"vendor_id": f.get("vendor_id")}))
+            elif f.get("message") == "DataTransfer":
+                pass                                       # approved vendor extension: outside the phase model
             elif msg := f.get("message"):
                 idx = self.phase_index(msg)
                 if idx is None:

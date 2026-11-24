@@ -28,7 +28,7 @@ from ocpp.v16.enums import (
 
 from advisor import Advisor
 from config import (
-    ATTESTATION_VENDOR_ID, CHECK_TIMINGS, EVIDENCE_DIR, FLOW_SENSOR_HOST, FLOW_SENSOR_PORT,
+    VENDOR, ATTESTATION_VENDOR_ID, CHECK_TIMINGS, EVIDENCE_DIR, FLOW_SENSOR_HOST, FLOW_SENSOR_PORT,
     HEARTBEAT_INTERVAL_S, OCPP_HOST, OCPP_PATH, OCPP_PORT, PRESENTATION_PACING, SITE,
 )
 from db.database import save_run
@@ -38,6 +38,7 @@ from gateway.sensor import start_collector
 from gateway.session import Session, TappedConnection
 from integrations.behavior import Action as EnfAction, render_wolfsentry_config
 from orchestrator.trust_engine import fuse
+from threatintel import analyse_url
 
 log = logging.getLogger("gateway")
 BEHAVIOUR_WINDOW_S = 10.0
@@ -127,6 +128,16 @@ class GatewayChargePoint(ChargePoint):
     async def on_data_transfer(self, vendor_id, message_id=None, data=None, **_):
         # Charger-initiated extensions are recorded in the transcript and judged by C4.
         if vendor_id == ATTESTATION_VENDOR_ID:
+            return call_result.DataTransfer(status=DataTransferStatus.accepted)
+        if vendor_id == VENDOR and message_id == "DisplayPaymentQR":
+            url = (json.loads(data or "{}") or {}).get("url", "")
+            result = await asyncio.to_thread(analyse_url, url)
+            self.session.payment_qr = {**result, "url": url}
+            self.session.emit("payment_qr", url=url, verdict=result["verdict"], score=result["score"],
+                              rules=result["rules"], host=result["details"]["host"])
+            if result["verdict"] == "phishing":
+                self.session.emit("alert", level="crit",
+                                  message=f"Payment QR on the charger screen points to a phishing site: {url}")
             return call_result.DataTransfer(status=DataTransferStatus.accepted)
         return call_result.DataTransfer(status=DataTransferStatus.unknown_vendor_id)
 
@@ -243,7 +254,7 @@ class Gateway:
 
         async def behaviour():
             return checks.check_behaviour(session.behaviour_records(BEHAVIOUR_WINDOW_S), BEHAVIOUR_WINDOW_S,
-                                          session.prior_messages(BEHAVIOUR_WINDOW_S))
+                                          session.prior_messages(BEHAVIOUR_WINDOW_S), session.qr_anomalies())
 
         r_id = await self._paced(session, "identity", identity)
         for name, fn in (("integrity", integrity), ("weaknesses", weaknesses), ("behavior", behaviour)):
@@ -280,7 +291,8 @@ class Gateway:
                 if not session.verdict_ready.is_set():
                     continue
                 records = session.behaviour_records(BEHAVIOUR_WINDOW_S)
-                result = checks.check_behaviour(records, BEHAVIOUR_WINDOW_S, session.prior_messages(BEHAVIOUR_WINDOW_S))
+                result = checks.check_behaviour(records, BEHAVIOUR_WINDOW_S, session.prior_messages(BEHAVIOUR_WINDOW_S),
+                                                session.qr_anomalies())
                 session.emit("monitor", status="suspicious" if result.status == "fail" else "normal",
                              anomalies=result.evidence["anomalies"][:6], records=len(records),
                              window_s=BEHAVIOUR_WINDOW_S, compute_ms=result.evidence.get("compute_ms"))
@@ -312,7 +324,7 @@ class Gateway:
         report = checks.baseline().evaluate(
             session.behaviour_records(BEHAVIOUR_WINDOW_S),
             start_phase=checks.baseline().phase_reached(session.prior_messages(BEHAVIOUR_WINDOW_S)))
-        action = "isolate" if report.action in (EnfAction.ISOLATE,) else "block"
+        action = "isolate" if report.action in (EnfAction.ISOLATE,) or session.qr_anomalies() else "block"
         steps = []
         if session.transaction_id is not None:
             try:
@@ -364,6 +376,7 @@ class Gateway:
             "ocpp_transcript": {"frames": len(transcript), "messages": transcript[-200:]},
             "network_flows_observed": len(session.flows),
             "charging_session": session.charging,
+            "payment_qr": session.payment_qr,
             "enforcement": session.enforcement,
             "advisory": session.advisory,
             "timing": {"presentation_pacing": PRESENTATION_PACING,

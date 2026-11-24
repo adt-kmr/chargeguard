@@ -39,10 +39,10 @@ async def _run(names):
 
 @pytest.fixture(scope="module")
 def results():
-    return {r["scenario"]: r for r in asyncio.run(_run(["healthy", "tampered", "vulnerable", "clone", "compromised"]))}
+    return {r["scenario"]: r for r in asyncio.run(_run(["healthy", "tampered", "vulnerable", "clone", "compromised", "quishing"]))}
 
 
-@pytest.mark.parametrize("name", ["healthy", "tampered", "vulnerable", "clone", "compromised"])
+@pytest.mark.parametrize("name", ["healthy", "tampered", "vulnerable", "clone", "compromised", "quishing"])
 def test_verdict_matches_expectation(results, name):
     r = results[name]
     assert r["final_verdict"] == r["expected"], r

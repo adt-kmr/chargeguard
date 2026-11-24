@@ -144,18 +144,21 @@ def check_weaknesses(resp: dict | None) -> CheckResult:
                        f"{len(cves)} known CVE(s) in this firmware ({crit} critical). Authentic but vulnerable.", ev)
 
 
-def check_behaviour(records: list[dict], window_s: float, prior_messages: list[str] = ()) -> CheckResult:
+def check_behaviour(records: list[dict], window_s: float, prior_messages: list[str] = (),
+                    extra_anomalies: list[dict] | None = None) -> CheckResult:
+    """extra_anomalies: findings from other detectors on this charger (e.g. a phishing payment QR)."""
     t0 = time.perf_counter()
     report = _BASELINE.evaluate(records, start_phase=_BASELINE.phase_reached(prior_messages))
-    ev = {"records": len(records), "window_s": window_s, "action": report.action.value,
+    anomalies = [{"rule": a.rule, "message": a.message, "peer": a.peer, "severity": a.severity}
+                 for a in report.anomalies[:12]] + list(extra_anomalies or [])
+    action = "isolate" if extra_anomalies else report.action.value
+    ev = {"records": len(records), "window_s": window_s, "action": action,
           "blocked_peers": report.blocked_peers, "rate_limited": report.rate_limited,
-          "anomalies": [{"rule": a.rule, "message": a.message, "peer": a.peer, "severity": a.severity}
-                        for a in report.anomalies[:12]],
-          "compute_ms": _ms(t0)}
-    if report.status == "normal":
+          "anomalies": anomalies, "compute_ms": _ms(t0)}
+    if report.status == "normal" and not extra_anomalies:
         return CheckResult("behavior", "pass",
                            f"{len(records)} observed messages and flows match the charger baseline.", ev)
-    rules = sorted({a.rule for a in report.anomalies})
+    rules = sorted({a["rule"] for a in anomalies})
     return CheckResult("behavior", "fail", f"Anomalous behaviour: {', '.join(rules)}.", ev)
 
 

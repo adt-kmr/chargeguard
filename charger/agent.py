@@ -52,6 +52,8 @@ from firmware.generator import SIG_OFFSET, attestation_key_path, get_device_key 
 log = logging.getLogger("charger")
 
 C2_VENDOR_ID = "net.updatesvc-cdn"           # attacker-controlled vendor extension
+LEGIT_PAYMENT_QR = "https://chargepoint.com/pay/CG-CHARGER-001"
+MALICIOUS_PAYMENT_QR = "https://chargepoint-pay.top/verify?station=CG-001"   # quishing: look-alike payment page
 
 
 def now() -> str:
@@ -176,6 +178,9 @@ class ChargerAgent(ChargePoint):
         self.heartbeat_interval = boot.interval or 5
         await self.status(ChargePointStatus.available)
         asyncio.create_task(self.heartbeat_loop())
+        # The idle screen shows a payment QR code; report it to the central system
+        await self.call(call.DataTransfer(vendor_id=VENDOR, message_id="DisplayPaymentQR",
+                                          data=json.dumps({"url": self.args.payment_qr, "screen": "idle"})))
 
         try:
             await asyncio.wait_for(self.attested.wait(), timeout=10)
@@ -262,6 +267,7 @@ def parse_args(argv=None):
     ap.add_argument("--attack-rate", type=float, default=40.0, help="messages per second (burst)")
     ap.add_argument("--plug-delay", type=float, default=0.5)
     ap.add_argument("--session-seconds", type=float, default=40.0)
+    ap.add_argument("--payment-qr", default=LEGIT_PAYMENT_QR, help="URL encoded in the screen's payment QR code")
     return ap.parse_args(argv)
 
 

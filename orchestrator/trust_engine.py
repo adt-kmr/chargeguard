@@ -38,6 +38,14 @@ def fuse(results: dict) -> dict:
         }
 
     if status(behavior) == "fail":
+        rules = {a.get("rule") for a in (behavior.evidence or {}).get("anomalies", [])}
+        if "malicious-payment-qr" in rules:
+            return {
+                "verdict": VERDICT_RED,
+                "reason":  "UNTRUSTED — charger screen shows a phishing payment QR code. "
+                           "Charger isolated to protect drivers.",
+                "score":   15,
+            }
         return {
             "verdict": VERDICT_RED,
             "reason":  "UNTRUSTED — anomalous live traffic detected. "

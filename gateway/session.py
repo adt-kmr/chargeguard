@@ -71,6 +71,14 @@ class Session:
     report_path: str | None = None
     verify_t0: float = 0.0
     responding: bool = False
+    payment_qr: dict | None = None          # threatintel result for the QR the charger displays
+
+    def qr_anomalies(self) -> list[dict]:
+        q = self.payment_qr
+        if not q or q.get("verdict") != "phishing":
+            return []
+        return [{"rule": "malicious-payment-qr", "peer": q["details"]["host"], "severity": "critical",
+                 "message": f"Charger screen shows a payment QR pointing to a phishing site ({q['details']['host']})"}]
     attestation: dict | None = None
     _pending: dict = field(default_factory=dict)   # unique_id -> action, to name CALLRESULTs
 

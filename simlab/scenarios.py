@@ -33,6 +33,7 @@ class Scenario:
     target: str = "192.168.1.254"
     rate: int = 50
     session_seconds: float = 30.0
+    payment_qr: str = "https://chargepoint.com/pay/CG-CHARGER-001"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -49,12 +50,13 @@ PRESETS = {
     "dns_exfil":   Scenario("dns_exfil", behaviour="dns_exfil"),
     "ocpp_flood":  Scenario("ocpp_flood", behaviour="burst"),
     "c2_mid_session": Scenario("c2_mid_session", behaviour="c2", attack_timing="mid_session"),
+    "quishing":    Scenario("quishing", payment_qr="https://chargepoint-pay.top/verify?station=CG-001"),
 }
 
 # Verdict each scenario must produce (used by the headless runner and tests)
 EXPECTED = {"healthy": "green", "tampered": "red", "vulnerable": "amber", "compromised": "red",
             "clone": "red", "rogue": "red", "c2_beacon": "red", "dns_exfil": "red", "ocpp_flood": "red",
-            "c2_mid_session": "red"}
+            "c2_mid_session": "red", "quishing": "red"}
 
 
 class ScenarioRunner:
@@ -79,7 +81,7 @@ class ScenarioRunner:
         args = [sys.executable, "-m", "charger.agent", "--firmware", str(IMAGES / FIRMWARE[sc.firmware]),
                 "--identity", sc.identity, "--attack", ocpp_attack, "--attack-at", sc.attack_timing,
                 "--attack-delay", str(sc.attack_delay), "--attack-rate", str(min(sc.rate, 60)),
-                "--session-seconds", str(sc.session_seconds)]
+                "--session-seconds", str(sc.session_seconds), "--payment-qr", sc.payment_qr]
         self.proc = await asyncio.create_subprocess_exec(*args, cwd=str(ROOT),
                                                          stdout=asyncio.subprocess.PIPE,
                                                          stderr=asyncio.subprocess.STDOUT)
