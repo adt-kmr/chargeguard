@@ -76,3 +76,45 @@ class ChargerSimulator:
 
     # ── Firmware info ─────────────────────────────────────────────────────
 
+    def get_firmware_info(self) -> dict:
+        from db.database import lookup_firmware
+        from config import KEYS_DIR
+        from firmware.generator import _load_or_create
+
+        mode = self.attack.firmware_mode
+
+        if mode == "tampered":
+            tampered_hash = get_hash_for_mode("tampered")
+            # Provide the GOOD sig (won't verify against tampered hash)
+            good_hash_bytes = bytes.fromhex(get_hash_for_mode(MODE_HEALTHY))
+            vendor_key = _load_or_create(KEYS_DIR / "vendor_private.pem")
+            good_sig = vendor_key.sign(good_hash_bytes)
+            return {
+                "hash":    tampered_hash,
+                "version": "2.1.0",
+                "vendor":  VENDOR,
+                "sig_hex": good_sig.hex(),
+            }
+
+        elif mode == "vulnerable":
+            vuln_hash = get_hash_for_mode("vulnerable")
+            record = lookup_firmware(vuln_hash)
+            sig_hex = record["sig_hex"] if record else "00" * 64
+            return {
+                "hash":    vuln_hash,
+                "version": "1.8.3",
+                "vendor":  VENDOR,
+                "sig_hex": sig_hex,
+            }
+
+        else:  # good
+            good_hash = get_hash_for_mode(MODE_HEALTHY)   # "healthy"
+            record = lookup_firmware(good_hash)
+            sig_hex = record["sig_hex"] if record else "00" * 64
+            return {
+                "hash":    good_hash,
+                "version": "2.1.0",
+                "vendor":  VENDOR,
+                "sig_hex": sig_hex,
+            }
+
