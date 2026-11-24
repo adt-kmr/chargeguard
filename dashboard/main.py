@@ -50,3 +50,13 @@ class VerifyRequest(BaseModel):
     behavior_target:  str       = "192.168.1.254"
     behavior_rate:    int       = 50
 
+
+@app.get("/")
+async def index():
+    return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/scenarios")
+async def scenarios():
+    return get_all_scenarios()
+
