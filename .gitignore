@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+*.pem
+firmware/keys/
+
+# Generated at runtime by `python main.py`
+db/*.db
+db/*.db-wal
+db/*.db-shm
+firmware/images/*.bin
+evidence/reports/*.json
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
