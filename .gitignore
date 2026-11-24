@@ -31,3 +31,6 @@ Thumbs.db
 # Firmware audit cache (C3), rebuilt on demand
 audit/audit_cache.db
 audit/cache/
+
+# Local editor / assistant tooling
+/.claude/
