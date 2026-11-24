@@ -36,13 +36,20 @@ chargeguard/
 ├── simulator/           # Attack harness (C9) and charger simulator (C10)
 ├── firmware/            # Firmware image and key generator
 ├── db/                  # SQLite registry: firmware, CVEs, identities, runs
-├── attestation/         # TPM 2.0 attestation layer (pluggable backends + verifiers)
-├── third_party/tpm/     # Vendored TPM stacks: tpm2-tss, wolfTPM, Keylime, IBM SW TPM
+├── attestation/         # C1 TPM 2.0 attestation layer (pluggable backends + verifiers)
+├── integrations/        # C2–C4, C7, C9 adapters for third-party security tools
+├── third_party/         # Vendored open-source tools, grouped by capability
 └── tests/               # Unit tests
 ```
 
-See [`attestation/README.md`](attestation/README.md) for the TPM layer and
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party licenses.
+- [`attestation/README.md`](attestation/README.md): the TPM layer (C1)
+- [`integrations/README.md`](integrations/README.md): firmware integrity, vulnerability audit,
+  behaviour baseline, evidence bundle and attack lab (C2–C9)
+- [`third_party/README.md`](third_party/README.md): what is vendored, what was trimmed, how to build it
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md): third-party licenses
+
+The attestation and integrations layers are standalone for now and are not yet
+connected to the checks or the dashboard.
 
 ## Getting started
 
