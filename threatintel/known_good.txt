@@ -1,0 +1,60 @@
+# Known-good registrable domains (curated, first-party only).
+#
+# A URL on one of these domains, or a subdomain of it, is capped at a low phishing
+# score: real products pair URL models with a reputation list because phishing
+# kits are often hosted on big platforms, which teaches models to distrust the
+# platforms themselves. User-content platforms (Google Sites, Firebase, IPFS,
+# GitHub Pages, ...) are NOT listed here and stay subject to the model and rules.
+# Hard red flags (raw IP, '@' redirect, punycode) still apply on listed domains.
+#
+# Format: one registrable domain per line.
+
+# Major platforms
+google.com
+youtube.com
+apple.com
+icloud.com
+microsoft.com
+live.com
+office.com
+outlook.com
+amazon.com
+amazon.in
+paypal.com
+netflix.com
+facebook.com
+instagram.com
+whatsapp.com
+linkedin.com
+github.com
+wikipedia.org
+
+# EV charging networks and energy utilities
+chargepoint.com
+ionity.eu
+tesla.com
+tatapower.com
+statiq.in
+evgo.com
+electrifyamerica.com
+shell.com
+bp.com
+bppulse.com
+ather.com
+jio.com
+
+# Payments and banks
+visa.com
+mastercard.com
+stripe.com
+razorpay.com
+paytm.com
+phonepe.com
+hdfcbank.com
+icicibank.com
+onlinesbi.sbi
+sbi.co.in
+hsbc.com
+barclays.co.uk
+chase.com
+wellsfargo.com

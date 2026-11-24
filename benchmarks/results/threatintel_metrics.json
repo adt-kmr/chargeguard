@@ -1,0 +1,107 @@
+{
+  "generated_at": "2026-11-24T14:02:57+00:00",
+  "seed": 20261124,
+  "host": {
+    "machine": "AMD64",
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.10",
+    "sklearn": "1.9.0"
+  },
+  "sms_scam": {
+    "dataset": "UCI SMS Spam Collection (CC BY 4.0)",
+    "rows_raw": 5574,
+    "rows_deduplicated": 5171,
+    "positives": 653,
+    "split": {
+      "train": 3619,
+      "val": 776,
+      "test": 776
+    },
+    "model": "logistic regression, hashed word 1-2 + char 3-5 grams, C=1.0",
+    "train_seconds": 0.25,
+    "test": {
+      "threshold": 0.45,
+      "accuracy": 0.9858,
+      "precision": 0.9677,
+      "recall": 0.9184,
+      "f1": 0.9424,
+      "roc_auc": 0.9911,
+      "pr_auc": 0.974,
+      "false_positive_rate": 0.0044,
+      "confusion": {
+        "tn": 675,
+        "fp": 3,
+        "fn": 8,
+        "tp": 90
+      },
+      "n": 776
+    },
+    "test_at_0.5": {
+      "threshold": 0.5,
+      "accuracy": 0.982,
+      "precision": 0.9667,
+      "recall": 0.8878,
+      "f1": 0.9255,
+      "roc_auc": 0.9911,
+      "pr_auc": 0.974,
+      "false_positive_rate": 0.0044,
+      "confusion": {
+        "tn": 675,
+        "fp": 3,
+        "fn": 11,
+        "tp": 87
+      },
+      "n": 776
+    }
+  },
+  "phishing_url": {
+    "dataset": "UCI PhiUSIIL Phishing URL Dataset (CC BY 4.0)",
+    "rows_raw": 235795,
+    "unique_hosts": 219036,
+    "positives": 84244,
+    "split": {
+      "train": 157158,
+      "val": 31785,
+      "test": 30093,
+      "grouped_by": "registrable domain",
+      "domains_in_both_train_and_test": 0
+    },
+    "model": "logistic regression, hashed hostname char 3-5 grams + 12 lexical features, C=4.0",
+    "train_seconds": 23.54,
+    "test": {
+      "threshold": 0.5,
+      "accuracy": 0.8548,
+      "precision": 0.8367,
+      "recall": 0.6791,
+      "f1": 0.7497,
+      "roc_auc": 0.8883,
+      "pr_auc": 0.854,
+      "false_positive_rate": 0.0625,
+      "confusion": {
+        "tn": 19176,
+        "fp": 1278,
+        "fn": 3093,
+        "tp": 6546
+      },
+      "n": 30093
+    },
+    "test_at_0.5": {
+      "threshold": 0.5,
+      "accuracy": 0.8548,
+      "precision": 0.8367,
+      "recall": 0.6791,
+      "f1": 0.7497,
+      "roc_auc": 0.8883,
+      "pr_auc": 0.854,
+      "false_positive_rate": 0.0625,
+      "confusion": {
+        "tn": 19176,
+        "fp": 1278,
+        "fn": 3093,
+        "tp": 6546
+      },
+      "n": 30093
+    },
+    "caveat": "Hostname-only model. PhiUSIIL legitimate URLs are all https://www.<domain> with no path, so full URLs leak the label; path keywords are handled by an explicit rule layer instead. Legitimate hosts are mostly popular sites, so scores on unusual legitimate domains will be lower."
+  }
+}
