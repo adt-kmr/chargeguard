@@ -628,6 +628,9 @@ input[type=range]::-webkit-slider-thumb{
         <div class="hud-badge">
           Firmware<div class="hud-val" id="hudFirmware">v2.1.0</div>
         </div>
+        <div class="hud-badge">
+          Charging Session<div class="hud-val" id="hudSession">offline</div>
+        </div>
       </div>
       <div class="hud-bottom" id="hudNodes">
         <div class="node-label"><div class="dot" style="background:#7c3aed"></div>Identity</div>
@@ -738,39 +741,31 @@ input[type=range]::-webkit-slider-thumb{
         </div>
       </div>
 
-      <!-- CVE Injection -->
+      <!-- Attack timing -->
       <div class="ctrl-section">
         <div class="ctrl-section-title cs-amber">
-          <div class="cs-icon">🔍</div>CVE Injection
-          <span style="font-size:.6rem;font-weight:400;color:var(--text3);margin-left:auto">
-            Overrides firmware CVEs
-          </span>
+          <div class="cs-icon">⏱</div>Attack Timing
         </div>
-        <div class="cve-list">
-          <label class="cve-label" id="cve-label-CVE-2022-0778" onclick="toggleCVE(this,'CVE-2022-0778')">
-            <input type="checkbox" value="CVE-2022-0778">
-            <div class="cve-check">✓</div>
-            <div class="cve-info">
-              <div class="cve-id">CVE-2022-0778 <span class="cve-sev sev-HIGH">HIGH 7.5</span></div>
-              <div class="cve-meta">OpenSSL — BN_mod_sqrt() infinite loop (DoS)</div>
+        <div class="radio-group" id="rg-timing">
+          <label class="radio-label checked" onclick="selectRadio('rg-timing',this,'plugin')">
+            <input type="radio" name="timing" value="plugin" checked>
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">At Plug-in</div>
+              <div class="radio-desc">Behaviour attack runs while the node verifies</div>
             </div>
           </label>
-          <label class="cve-label" id="cve-label-CVE-2021-28831" onclick="toggleCVE(this,'CVE-2021-28831')">
-            <input type="checkbox" value="CVE-2021-28831">
-            <div class="cve-check">✓</div>
-            <div class="cve-info">
-              <div class="cve-id">CVE-2021-28831 <span class="cve-sev sev-HIGH">HIGH 7.5</span></div>
-              <div class="cve-meta">BusyBox — gunzip invalid free (RCE)</div>
+          <label class="radio-label" onclick="selectRadio('rg-timing',this,'mid_session')">
+            <input type="radio" name="timing" value="mid_session">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Mid-Session</div>
+              <div class="radio-desc">Charger passes, starts charging, then turns hostile</div>
             </div>
           </label>
-          <label class="cve-label" id="cve-label-CVE-2022-37434" onclick="toggleCVE(this,'CVE-2022-37434')">
-            <input type="checkbox" value="CVE-2022-37434">
-            <div class="cve-check">✓</div>
-            <div class="cve-info">
-              <div class="cve-id">CVE-2022-37434 <span class="cve-sev sev-CRITICAL">CRITICAL 9.8</span></div>
-              <div class="cve-meta">zlib — inflate() heap overflow (RCE)</div>
-            </div>
-          </label>
+        </div>
+        <div class="radio-desc" style="margin-top:.45rem;line-height:1.35">
+          Known CVEs are not injected: they come from the one-time audit of the firmware image the charger boots.
         </div>
       </div>
 
@@ -873,15 +868,16 @@ input[type=range]::-webkit-slider-thumb{
   <div class="bottom-col">
     <div class="bottom-col-title">
       <div class="bc-icon" style="background:#f0fdf4;color:var(--green)">📶</div>
-      Network Traffic
+      Live OCPP &amp; Network
     </div>
-    <div class="traffic-monitor" id="trafficMonitor">
+    <div class="traffic-monitor" id="ocppLog" style="max-height:44%;overflow:hidden;margin-bottom:.4rem">
       <div class="traffic-row">
-        <span class="traffic-proto proto-normal">HEARTBEAT</span>
-        <span class="traffic-dst">localhost:8080</span>
-        <span class="traffic-rate">1 msg/s</span>
+        <span class="traffic-proto proto-normal">OCPP 1.6</span>
+        <span class="traffic-dst">waiting for charger connection…</span>
+        <span class="traffic-rate"></span>
       </div>
     </div>
+    <div class="traffic-monitor" id="trafficMonitor"></div>
   </div>
 
   <!-- Col 3: Evidence -->
@@ -1336,10 +1332,12 @@ ro.observe(canvas);
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 const cfg = {
+  preset:          'healthy',
   identity_attack: 'legitimate',
   firmware_mode:   'good',
   inject_cves:     [],
   behavior_attack: 'normal',
+  attack_timing:   'plugin',
   behavior_rate:   50,
   behavior_target: '192.168.1.254',
 };
@@ -1350,24 +1348,28 @@ let timerIv     = null;
 let t0          = null;
 let lastReport  = null;
 let alertCount  = 0;
+let verifyT0    = null;
+let monitorAlerted = false;
+let lastAdvisory = null;
+const ocppFrames = [];
 
 // ── Preset definitions ──────────────────────────────────────────────────────
 const PRESETS = {
   healthy: {
     identity_attack:'legitimate', firmware_mode:'good',
-    inject_cves:[], behavior_attack:'normal',
+    inject_cves:[], behavior_attack:'normal', attack_timing:'plugin',
   },
   tampered: {
     identity_attack:'legitimate', firmware_mode:'tampered',
-    inject_cves:[], behavior_attack:'normal',
+    inject_cves:[], behavior_attack:'normal', attack_timing:'plugin',
   },
   vulnerable: {
     identity_attack:'legitimate', firmware_mode:'vulnerable',
-    inject_cves:[], behavior_attack:'normal',
+    inject_cves:[], behavior_attack:'normal', attack_timing:'plugin',
   },
   compromised: {
     identity_attack:'legitimate', firmware_mode:'good',
-    inject_cves:[], behavior_attack:'port_scan',
+    inject_cves:[], behavior_attack:'port_scan', attack_timing:'mid_session',
   },
 };
 
@@ -1378,6 +1380,7 @@ function applyPreset(btn) {
   document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
   btn.classList.add('selected');
   const p = btn.dataset.preset;
+  cfg.preset = p;
   if(p === 'custom') return;
   const pre = PRESETS[p]; if(!pre) return;
   Object.assign(cfg, pre);
@@ -1385,6 +1388,7 @@ function applyPreset(btn) {
   setRadio('rg-identity', pre.identity_attack);
   setRadio('rg-firmware', pre.firmware_mode);
   setRadio('rg-behavior', pre.behavior_attack);
+  setRadio('rg-timing',   pre.attack_timing);
   document.querySelectorAll('.cve-label.checked').forEach(l=>{
     l.classList.remove('checked');
   });
@@ -1399,11 +1403,12 @@ function setRadio(groupId, value) {
   group.querySelectorAll('.radio-label').forEach(l => {
     const isChecked = l.querySelector('input').value === value;
     l.classList.toggle('checked', isChecked);
-    l.classList.toggle('attack-active', isChecked && value !== 'legitimate' && value !== 'good' && value !== 'normal');
+    l.classList.toggle('attack-active', isChecked && !['legitimate','good','normal','plugin','mid_session'].includes(value));
   });
   if(groupId === 'rg-identity')  cfg.identity_attack  = value;
   if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
   if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
+  if(groupId === 'rg-timing')    cfg.attack_timing    = value;
 }
 
 function selectRadio(groupId, label, value) {
@@ -1411,13 +1416,15 @@ function selectRadio(groupId, label, value) {
     l.classList.remove('checked','attack-active');
   });
   label.classList.add('checked');
-  const isAttack = value !== 'legitimate' && value !== 'good' && value !== 'normal';
+  const isAttack = !['legitimate','good','normal','plugin','mid_session'].includes(value);
   if(isAttack) label.classList.add('attack-active');
   if(groupId === 'rg-identity')  cfg.identity_attack  = value;
   if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
   if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
+  if(groupId === 'rg-timing')    cfg.attack_timing    = value;
   updateHUDFirmware();
   // Auto-select custom preset
+  cfg.preset = 'custom';
   document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('selected'));
   document.querySelector('[data-preset=custom]').classList.add('selected');
 }
@@ -1462,12 +1469,13 @@ async function startVerification() {
 
   if(window.sceneCtrl) window.sceneCtrl.reset();
 
-  // Create session
+  // Create session: the backend launches the charger process and the network tap
   const body = {
+    mode:             cfg.preset !== 'custom' ? cfg.preset : null,
     identity_attack:  cfg.identity_attack,
     firmware_mode:    cfg.firmware_mode,
-    inject_cves:      cfg.inject_cves,
     behavior_attack:  cfg.behavior_attack,
+    attack_timing:    cfg.attack_timing,
     behavior_target:  document.getElementById('targetInput').value || '192.168.1.254',
     behavior_rate:    cfg.behavior_rate,
   };
@@ -1480,18 +1488,9 @@ async function startVerification() {
   sessionId = session_id;
   document.getElementById('sessionDisplay').textContent =
     'Session: ' + session_id.slice(0,8) + '…';
+  addAlert('info', 'Charger process launched — waiting for OCPP BootNotification');
 
-  // Start timer
-  t0 = Date.now();
-  document.getElementById('hudTimerWrap').style.opacity = '1';
-  timerIv = setInterval(()=>{
-    const e = (Date.now()-t0)/1000;
-    document.getElementById('hudTimer').textContent = e.toFixed(1) + 's';
-    const pct = Math.min(e/5*100,100).toFixed(1)+'%';
-    document.getElementById('timerBarFill').style.width = pct;
-  }, 80);
-
-  // WebSocket
+  // WebSocket: live gateway events for the whole session
   ws = new WebSocket(`ws://${location.host}/ws/${session_id}`);
   ws.onmessage = e => handleEvent(JSON.parse(e.data));
   ws.onclose   = () => { document.getElementById('btnVerify').disabled=false; stopTimer(); };
@@ -1512,7 +1511,44 @@ const CHECK_ICONS = {
   identity:'🔑', integrity:'🔏', weaknesses:'🔍', behavior:'📡'
 };
 
+function verifyTime(ev) {
+  return verifyT0 === null ? ev.t : Math.max(0, ev.t - verifyT0);
+}
+
 function handleEvent(ev) {
+  if(ev.event === 'connected') {
+    addAlert('info', `Charger ${ev.device_id} connected (${ev.subprotocol}) from ${ev.remote}`);
+    document.getElementById('hudDevice').textContent = ev.device_id;
+  }
+
+  if(ev.event === 'verify_start') {
+    verifyT0 = ev.t;
+    t0 = Date.now();
+    document.getElementById('hudTimerWrap').style.opacity = '1';
+    timerIv = setInterval(()=>{
+      const e = (Date.now()-t0)/1000;
+      document.getElementById('hudTimer').textContent = e.toFixed(1) + 's';
+      document.getElementById('timerBarFill').style.width = Math.min(e/5*100,100).toFixed(1)+'%';
+    }, 80);
+  }
+
+  if(ev.event === 'ocpp')        addOcppFrame(ev);
+  if(ev.event === 'traffic')     renderTraffic(ev.rows || []);
+  if(ev.event === 'session')     renderSession(ev);
+  if(ev.event === 'advisory')    renderAdvisory(ev);
+  if(ev.event === 'alert')       addAlert(ev.level || 'warn', ev.message);
+  if(ev.event === 'monitor' && ev.status === 'suspicious' && !monitorAlerted) {
+    monitorAlerted = true;
+    addAlert('crit', `[MONITOR] ${ev.anomalies.map(a=>a.rule).filter((v,i,s)=>s.indexOf(v)===i).join(', ')}`);
+  }
+  if(ev.event === 'enforcement') {
+    const lvl = ev.action === 'deny' ? 'warn' : 'crit';
+    addAlert(lvl, `ENFORCEMENT: ${ev.detail}`);
+    (ev.steps || []).forEach(s => addAlert('crit', '↳ ' + s));
+    if(ev.action === 'isolate') setStatusPill('done-red', 'ISOLATED');
+  }
+  if(ev.event === 'disconnected') addAlert('info', `Charger ${ev.device_id} disconnected`);
+
   if(ev.event === 'check_start') {
     setCheckRow(ev.check, 'active',
       '<span class="spin"></span> Checking…', '');
@@ -1521,13 +1557,13 @@ function handleEvent(ev) {
       window.sceneCtrl.activateNode(ev.check);
       if(ev.check === 'integrity') window.sceneCtrl.triggerScan();
     }
-    addAlert('info', `[${ev.check.toUpperCase()}] Check started at ${ev.t.toFixed(2)}s`);
-    updateTrafficMonitor(ev.check);
+    addAlert('info', `[${ev.check.toUpperCase()}] Check started at ${verifyTime(ev).toFixed(2)}s`);
   }
 
   if(ev.event === 'check_done') {
-    setCheckRow(ev.check, ev.status, ev.detail, ev.t.toFixed(2)+'s');
-    setResultCard(ev.check, ev.status, ev.status.toUpperCase(), ev.t.toFixed(2)+'s');
+    const tv = verifyTime(ev).toFixed(2)+'s';
+    setCheckRow(ev.check, ev.status, ev.detail, `${tv} · compute ${ev.compute_ms} ms`);
+    setResultCard(ev.check, ev.status, ev.status.toUpperCase(), tv);
     if(window.sceneCtrl) window.sceneCtrl.resolveNode(ev.check, ev.status);
     const lvl = ev.status === 'fail' ? 'crit' : ev.status === 'warning' ? 'warn' : 'info';
     addAlert(lvl, `[${ev.check.toUpperCase()}] ${ev.status.toUpperCase()} — ${ev.detail.slice(0,70)}`);
@@ -1545,10 +1581,17 @@ function handleEvent(ev) {
     setStatusPill('done-'+ev.verdict, ev.verdict.toUpperCase());
     if(window.sceneCtrl) window.sceneCtrl.setVerdict(ev.verdict);
     const lvl = ev.verdict==='green'?'info': ev.verdict==='amber'?'warn':'crit';
-    addAlert(lvl, `VERDICT: ${ev.verdict.toUpperCase()} (score ${ev.score}/100) — ${ev.reason.slice(0,80)}`);
+    const when = ev.mid_session ? 'MID-SESSION ' : '';
+    addAlert(lvl, `${when}VERDICT: ${ev.verdict.toUpperCase()} (score ${ev.score}/100) — ${ev.reason.slice(0,80)}`);
+    if(ev.mid_session && ev.results?.behavior) {
+      setCheckRow('behavior', 'fail', ev.results.behavior.detail, 'live monitor');
+      setResultCard('behavior', 'fail', 'FAIL', 'live');
+      if(window.sceneCtrl) window.sceneCtrl.resolveNode('behavior', 'fail');
+    }
   }
 
   if(ev.event === 'report_ready') {
+    document.getElementById('btnVerify').disabled = false;   // next act can start; backend stops this charger
     lastReport = ev;
     document.getElementById('btnEvidence').classList.add('visible');
     updateEvidencePanel(ev);
@@ -1570,6 +1613,13 @@ function resetUI() {
   });
   document.getElementById('btnEvidence').classList.remove('visible');
   document.getElementById('trafficMonitor').innerHTML = '';
+  document.getElementById('ocppLog').innerHTML = '';
+  document.getElementById('hudSession').textContent = 'offline';
+  document.getElementById('hudSession').style.color = '';
+  document.getElementById('hudTimer').textContent = '0.0s';
+  document.getElementById('timerBarFill').style.width = '0%';
+  ocppFrames.length = 0;
+  verifyT0 = null; monitorAlerted = false; lastAdvisory = null; lastReport = null;
 }
 
 function getDefaultDetail(n) {
@@ -1648,6 +1698,63 @@ function addAlert(type, msg) {
   while(list.children.length > 12) list.removeChild(list.lastChild);
 }
 
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function addOcppFrame(ev) {
+  if(ev.kind === 'CALLRESULT' && ev.action === 'Heartbeat') return;
+  ocppFrames.unshift(ev);
+  if(ocppFrames.length > 9) ocppFrames.pop();
+  document.getElementById('ocppLog').innerHTML = ocppFrames.map(f => {
+    const isBad = f.action === 'DataTransfer' && f.dir === 'in' && f.kind === 'CALL'
+                  && !String(f.summary).startsWith('org.chargeguard');
+    const isRes = f.kind !== 'CALL';
+    return `<div class="traffic-row">
+      <span class="traffic-proto ${isBad ? 'proto-attack' : 'proto-normal'}">${f.dir === 'in' ? 'CP→CG' : 'CG→CP'}</span>
+      <span class="traffic-dst">${isRes ? '↳ ' : ''}${esc(f.action || '')} <span style="color:var(--text3)">${esc(f.summary)}</span></span>
+      <span class="traffic-rate">${f.t.toFixed(1)}s</span>
+    </div>`;
+  }).join('');
+}
+
+function renderTraffic(rows) {
+  const mon = document.getElementById('trafficMonitor');
+  if(!rows.length) { mon.innerHTML = ''; return; }
+  mon.innerHTML = rows.map(r => `
+    <div class="traffic-row">
+      <span class="traffic-proto ${r.attack ? 'proto-attack' : 'proto-normal'}">${esc(r.proto)}</span>
+      <span class="traffic-dst">${esc(r.dst)}</span>
+      <span class="traffic-rate">${esc(r.rate)}</span>
+    </div>`).join('');
+}
+
+function renderSession(s) {
+  const el = document.getElementById('hudSession');
+  const state = (s.state || 'offline').replace('_', ' ');
+  el.textContent = state === 'charging'
+    ? `charging · ${(s.power_kw||0).toFixed(1)} kW · ${(s.energy_kwh||0).toFixed(3)} kWh`
+    : state + (s.energy_kwh ? ` · ${s.energy_kwh.toFixed(3)} kWh` : '');
+  el.style.color = state === 'charging' ? 'var(--green)' : (s.stop_reason === 'Remote' ? 'var(--red)' : '');
+}
+
+function advisoryHTML(a) {
+  if(!a) return '';
+  const llm = !a.engine.startsWith('rule-based');
+  return `<div class="cve-ev-list advisory-block" style="margin-top:.5rem;border-top:1px solid var(--border);padding-top:.45rem">
+    <div class="cve-ev-id">Advisor <span class="cve-sev ${llm ? 'sev-HIGH' : 'sev-MEDIUM'}" title="${esc(a.fallback_reason||'')}">${esc(a.engine)}</span></div>
+    <div class="cve-ev-desc" style="margin:.25rem 0">${esc(a.summary)}</div>
+    ${(a.steps||[]).map((s,i)=>`<div class="cve-ev-desc">${i+1}. ${esc(s)}</div>`).join('')}
+  </div>`;
+}
+
+function renderAdvisory(a) {
+  lastAdvisory = a;
+  const ep = document.getElementById('evidencePanel');
+  ep.querySelector('.advisory-block')?.remove();
+  ep.insertAdjacentHTML('beforeend', advisoryHTML(a));
+}
+
 function updateTrafficMonitor(checkName) {
   const mon = document.getElementById('trafficMonitor');
   const trafficMap = {
@@ -1718,7 +1825,8 @@ function updateEvidencePanel(ev) {
       <div class="ev-row-b"><span class="ev-k">Time</span><span class="ev-v">${data.generated_at?.slice(0,19)}</span></div>
       <div class="ev-row-b"><span class="ev-k">Mode</span><span class="ev-v">${data.charger_mode}</span></div>
       <div class="ev-row-b"><span class="ev-k">Sig</span><span class="ev-v">${data.signature?.slice(0,18)}…</span></div>
-    `;
+      <div class="ev-row-b"><span class="ev-k">OCPP</span><span class="ev-v">${data.ocpp_transcript?.frames ?? '—'} frames · ${data.network_flows_observed ?? 0} flows</span></div>
+    ` + advisoryHTML(lastAdvisory || data.advisory);
     // Update compliance list
     const cl = document.getElementById('complianceList');
     const controls = data.compliance_controls || {};
@@ -1774,8 +1882,44 @@ async function openModal() {
     html += '</div>';
   }
 
+  const box = (title, inner) => `<div style="margin:0.6rem 0;padding:.5rem .6rem;border-radius:7px;
+      border:1px solid var(--border);background:var(--surface2)">
+      <div style="font-size:.7rem;font-weight:700;color:var(--text);margin-bottom:4px">${title}</div>${inner}</div>`;
+  const line = t => `<div style="font-size:.66rem;color:var(--text2);margin-top:2px">${esc(t)}</div>`;
+
+  const att = data.attestation_response;
+  if(att) {
+    html += box('ATTESTATION (OCPP DataTransfer · org.chargeguard)',
+      line(`Device ${att.device_id} · firmware ${att.firmware?.version} (${att.firmware?.vendor})`) +
+      line(`Payload SHA-256 ${att.firmware?.payload_sha256}`) +
+      line(`Measured PCR0 ${att.pcrs?.values?.['0']}`) +
+      line(`TPM quote signed by ${att.quote?.signing_key?.algorithm} attestation key (${att.quote?.backend})`));
+  }
+  if(data.enforcement) {
+    const e = data.enforcement;
+    html += box(`ENFORCEMENT — ${String(e.action).toUpperCase()} (${e.when})`,
+      (e.steps||[]).map(line).join('') +
+      line('nftables (node): ' + (e.artifacts?.nftables || []).slice(-2).join(' ; ')));
+  }
+  if(data.advisory) {
+    const a = data.advisory;
+    html += box(`ADVISOR — ${esc(a.engine)}`, line(a.summary) + (a.steps||[]).map((s,i)=>line(`${i+1}. ${s}`)).join('') +
+      (a.fallback_reason ? line('Note: ' + a.fallback_reason) : ''));
+  }
+  html += box('INTEGRITY OF THIS REPORT',
+    `<div id="sigCheck" style="font-size:.66rem;color:var(--text2)">Ed25519 signature over the verdict and a SHA-256 of the full report body.</div>
+     <button class="btn-dl" style="margin-top:.4rem;padding:.3rem .6rem;font-size:.66rem" onclick="checkSignature()">Verify signature</button>`);
+
   document.getElementById('modalBody').innerHTML = html;
 }
+
+async function checkSignature() {
+  const r = await fetch(`/api/report/${sessionId}/verify`).then(r=>r.json());
+  const el = document.getElementById('sigCheck');
+  el.textContent = (r.valid ? '✔ ' : '✖ ') + r.detail;
+  el.style.color = r.valid ? 'var(--green)' : 'var(--red)';
+}
+window.checkSignature = checkSignature;
 window.openModal = openModal;
 
 function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
