@@ -1,0 +1,165 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+# unit.test requires a running TPM server. When fwtpm_check.sh is used
+# (BUILD_FWTPM), it manages the server and runs unit.test internally —
+# so exclude unit.test from check_PROGRAMS in that case.
+if BUILD_EXAMPLES
+if !BUILD_FWTPM
+check_PROGRAMS += tests/unit.test
+endif
+noinst_PROGRAMS += tests/unit.test
+tests_unit_test_SOURCES      = tests/unit_tests.c \
+                               examples/tpm_test_keys.c \
+                               examples/firmware/st33_blob0.c
+tests_unit_test_CFLAGS       = $(AM_CFLAGS)
+tests_unit_test_LDADD        = src/libwolftpm.la $(LIB_STATIC_ADD)
+tests_unit_test_DEPENDENCIES = src/libwolftpm.la
+endif
+
+if BUILD_FWTPM
+check_PROGRAMS += tests/fwtpm_unit.test
+noinst_PROGRAMS += tests/fwtpm_unit.test
+tests_fwtpm_unit_test_SOURCES = \
+    tests/fwtpm_unit_tests.c \
+    src/fwtpm/fwtpm.c \
+    src/fwtpm/fwtpm_command.c \
+    src/fwtpm/fwtpm_crypto.c \
+    tests/fwtpm_io_test_adapter.c \
+    src/fwtpm/fwtpm_nv.c \
+    src/tpm2_util.c \
+    src/tpm2_packet.c \
+    src/tpm2_crypto.c \
+    src/tpm2_param_enc.c
+tests_fwtpm_unit_test_CFLAGS   = -DWOLFTPM_FWTPM -DFWTPM_NV_FILE=\"fwtpm_test_nv.bin\" $(AM_CFLAGS)
+tests_fwtpm_unit_test_CPPFLAGS = \
+    -DWOLFTPM_FWTPM -DWOLFTPM_FWTPM_UNIT_TEST $(AM_CPPFLAGS)
+tests_fwtpm_unit_test_LDADD    = $(LIB_STATIC_ADD)
+endif
+
+# SWTPM UART receive tests. Driven over a pseudo-terminal, so no hardware or
+# simulator is needed, but make check cannot run in a UART configuration
+# (unit.test needs a TPM), so the swtpm-uart CI job runs this directly.
+# tpm2_swtpm.c is compiled in because TPM2_SWTPM_SendCommand is WOLFTPM_LOCAL.
+if BUILD_SWTPM_UART
+noinst_PROGRAMS += tests/swtpm_uart_unit.test
+tests_swtpm_uart_unit_test_SOURCES = \
+    tests/swtpm_uart_unit_tests.c \
+    src/tpm2_swtpm.c \
+    src/tpm2_packet.c \
+    src/tpm2_util.c
+# Shorten the deadline and the per-read period so the timeout case is quick
+tests_swtpm_uart_unit_test_CFLAGS = \
+    -DWOLFTPM_SWTPM_UART_RX_TIMEOUT_SECS=3 \
+    -DWOLFTPM_SWTPM_UART_VTIME=1 $(AM_CFLAGS)
+tests_swtpm_uart_unit_test_LDADD = $(LIB_STATIC_ADD)
+endif
+
+# Host test of the PikeOS transport against the stubs in tests/pikeos_stub.
+# Not built by make, as a PikeOS target has the real vm_* calls. On a host the
+# library needs the stub headers too: CFLAGS=-Itests/pikeos_stub.
+# --enable-fwtpm-only does not build the client library this links against.
+if BUILD_PIKEOS
+if !BUILD_FWTPM_ONLY
+check_PROGRAMS += tests/pikeos_unit.test
+tests_pikeos_unit_test_SOURCES = tests/pikeos_unit_tests.c
+tests_pikeos_unit_test_CFLAGS = $(AM_CFLAGS)
+tests_pikeos_unit_test_CPPFLAGS = -I$(srcdir)/tests/pikeos_stub $(AM_CPPFLAGS)
+tests_pikeos_unit_test_LDADD = $(src_libwolftpm_la_OBJECTS) \
+    $(src_libwolftpm_la_LIBADD) $(LIB_STATIC_ADD)
+tests_pikeos_unit_test_DEPENDENCIES = src/libwolftpm.la
+endif
+endif
+EXTRA_DIST += tests/pikeos_stub/p4.h tests/pikeos_stub/vm.h
+
+if BUILD_FWTPM_TIS
+check_PROGRAMS += tests/fwtpm_hal_unit.test
+noinst_PROGRAMS += tests/fwtpm_hal_unit.test
+tests_fwtpm_hal_unit_test_SOURCES = tests/fwtpm_hal_unit_tests.c
+tests_fwtpm_hal_unit_test_CFLAGS = \
+    -DWOLFTPM_FWTPM_HAL -DWOLFTPM_ADV_IO -DWOLFTPM_EXAMPLE_HAL $(AM_CFLAGS)
+tests_fwtpm_hal_unit_test_CPPFLAGS = \
+    -DWOLFTPM_FWTPM_HAL -DWOLFTPM_ADV_IO -DWOLFTPM_EXAMPLE_HAL $(AM_CPPFLAGS)
+tests_fwtpm_hal_unit_test_LDADD = $(FWTPM_TIS_LIBS)
+endif
+
+# TPM make check: manages server, runs unit.test + run_examples.sh
+# Used for --enable-fwtpm builds
+if BUILD_FWTPM
+dist_noinst_SCRIPTS += tests/fwtpm_check.sh \
+                       tests/fwtpm_da_retry.sh
+endif
+
+EXTRA_DIST += tests/pqc_kat_vectors.h
+
+if BUILD_EXAMPLES
+if BUILD_SPDM
+if BUILD_SPDM_TCG
+check_PROGRAMS += tests/spdm_ctrl.test
+noinst_PROGRAMS += tests/spdm_ctrl.test
+tests_spdm_ctrl_test_SOURCES = tests/spdm_ctrl_tests.c
+tests_spdm_ctrl_test_CFLAGS = $(AM_CFLAGS)
+tests_spdm_ctrl_test_LDADD = src/libwolftpm.la $(LIB_STATIC_ADD)
+endif
+endif
+endif
+
+if BUILD_EXAMPLES
+# Authorization-area accounting, no TPM and no vendor build. The functions
+# are WOLFTPM_LOCAL, so link the library objects rather than the shared
+# library, which does not export them.
+check_PROGRAMS += tests/packet_auth.test
+noinst_PROGRAMS += tests/packet_auth.test
+tests_packet_auth_test_SOURCES = tests/packet_auth_tests.c
+tests_packet_auth_test_CFLAGS = $(AM_CFLAGS)
+tests_packet_auth_test_LDADD = $(src_libwolftpm_la_OBJECTS) \
+    $(src_libwolftpm_la_LIBADD) $(LIB_STATIC_ADD)
+tests_packet_auth_test_DEPENDENCIES = src/libwolftpm.la
+endif
+
+if BUILD_EXAMPLES
+if BUILD_INFINEON_SPDM
+check_PROGRAMS += tests/spdm_config.test
+noinst_PROGRAMS += tests/spdm_config.test
+tests_spdm_config_test_SOURCES = tests/spdm_config_tests.c
+tests_spdm_config_test_CFLAGS = $(AM_CFLAGS)
+# The mock command builders replace tpm2.lo; link the remaining objects
+# directly so internal packet/crypto helpers are available in shared builds.
+# Match the suffix rather than the whole name: the libwolftpm_la- prefix is
+# automake's per-target CFLAGS convention and goes away if those go away,
+# and a filter-out that matches nothing links the real tpm2.lo instead.
+spdm_config_tpm2_object = \
+    $(filter %/tpm2.lo %-tpm2.lo,$(src_libwolftpm_la_OBJECTS))
+spdm_config_support_objects = \
+    $(filter-out $(spdm_config_tpm2_object),$(src_libwolftpm_la_OBJECTS))
+tests_spdm_config_test_LDADD = $(spdm_config_support_objects) \
+    $(src_libwolftpm_la_LIBADD) $(LIB_STATIC_ADD)
+tests_spdm_config_test_DEPENDENCIES = src/libwolftpm.la
+endif
+endif
+
+if BUILD_EXAMPLES
+if BUILD_WRAPPER
+# Run the real signature wrappers and response decoder against wire fixtures.
+check_PROGRAMS += tests/signature_padding.test
+noinst_PROGRAMS += tests/signature_padding.test
+tests_signature_padding_test_SOURCES = tests/signature_padding_tests.c
+tests_signature_padding_test_CFLAGS = $(AM_CFLAGS)
+signature_padding_tpm2_object = \
+    $(filter %/tpm2.lo %-tpm2.lo,$(src_libwolftpm_la_OBJECTS))
+signature_padding_support_objects = \
+    $(filter-out $(signature_padding_tpm2_object),$(src_libwolftpm_la_OBJECTS))
+tests_signature_padding_test_LDADD = $(signature_padding_support_objects) \
+    $(src_libwolftpm_la_LIBADD) $(LIB_STATIC_ADD)
+tests_signature_padding_test_DEPENDENCIES = src/libwolftpm.la
+# Scripted TPM_CAP_HANDLES pages, which a simulator cannot produce on demand.
+check_PROGRAMS += tests/transient_unload.test
+noinst_PROGRAMS += tests/transient_unload.test
+tests_transient_unload_test_SOURCES = tests/transient_unload_tests.c
+tests_transient_unload_test_CFLAGS = $(AM_CFLAGS)
+tests_transient_unload_test_LDADD = $(signature_padding_support_objects) \
+    $(src_libwolftpm_la_LIBADD) $(LIB_STATIC_ADD)
+tests_transient_unload_test_DEPENDENCIES = src/libwolftpm.la
+endif
+endif

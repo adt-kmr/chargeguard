@@ -1,0 +1,1136 @@
+/* fwtpm_io.c
+ *
+ * Copyright (C) 2006-2026 wolfSSL Inc.
+ *
+ * This file is part of wolfTPM.
+ *
+ * wolfTPM is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfTPM is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+/* fwTPM Socket Transport Server
+ * Implements the server side of the SWTPM TCP protocol so that
+ * wolfTPM clients built with --enable-swtpm can connect directly.
+ */
+
+#ifdef HAVE_CONFIG_H
+    #include <config.h>
+#endif
+
+#include <wolftpm/tpm2_types.h>
+
+#ifdef WOLFTPM_FWTPM
+
+#include <wolftpm/tpm2_packet.h>
+#include <wolftpm/fwtpm/fwtpm.h>
+#include <wolftpm/fwtpm/fwtpm_io.h>
+#include <wolftpm/fwtpm/fwtpm_command.h>
+#ifdef WOLFTPM_FWTPM_TIS
+#include <wolftpm/fwtpm/fwtpm_tis.h>
+#endif
+#ifdef WOLFTPM_SPDM_RESPONDER
+#include <wolftpm/spdm/spdm_responder.h>
+#include <wolftpm/spdm/spdm_types.h>
+#endif
+
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+#ifdef HAVE_NETDB_H
+#include <netdb.h>
+#endif
+
+#include <wolftpm/tpm2_socket.h>
+
+#include <signal.h> /* sig_atomic_t */
+#ifndef _WIN32
+#include <sys/select.h>
+#include <arpa/inet.h>
+#include <netinet/tcp.h> /* TCP_NODELAY */
+#endif
+
+/* Scatter/gather send, so one mssim reply is one segment */
+#if !defined(_WIN32) && !defined(WOLFTPM_ZEPHYR) && \
+    !defined(FWTPM_NO_WRITEV)
+    #define FWTPM_HAVE_WRITEV
+    #include <sys/uio.h>
+#endif
+
+/* Async-signal-safe stop flag. Set by FWTPM_IO_RequestStop() (callable from
+ * a signal handler) and polled by the server loop. Using sig_atomic_t guarantees
+ * POSIX-conformant atomic read/write from inside a signal handler. */
+static volatile sig_atomic_t g_stopRequested = 0;
+
+void FWTPM_IO_RequestStop(void)
+{
+    g_stopRequested = 1;
+}
+
+int FWTPM_IO_IsStopRequested(void)
+{
+    return g_stopRequested != 0;
+}
+
+/* Use TPM2_Packet_SwapU32 from tpm2_packet.c (compiled directly) */
+#define FwTpmSwapU32 TPM2_Packet_SwapU32
+
+#ifndef WOLFTPM_FWTPM_TIS
+/* --- Low-level socket helpers --- */
+
+#define FWTPM_MAX_COMMAND_CLIENTS 8
+#define FWTPM_IO_CONNECTION_CLOSED (-1)
+
+/* Wait up to FWTPM_CLOCK_POLL_MS for fd, so a client that pauses mid-packet
+ * does not hold off Clock updates. Returns 1 when ready, 0 on timeout and
+ * negative on error. */
+static int SocketWait(SOCKET_T fd, int forWrite)
+{
+    fd_set fds;
+    struct timeval tv;
+
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    tv.tv_sec = FWTPM_CLOCK_POLL_MS / 1000;
+    tv.tv_usec = (FWTPM_CLOCK_POLL_MS % 1000) * 1000;
+    /* Windows ignores the first argument; see FWTPM_IO_ServerLoop */
+    return select((int)(fd + 1), forWrite ? NULL : &fds,
+        forWrite ? &fds : NULL, NULL, &tv);
+}
+
+static int SocketSend(FWTPM_CTX* ctx, SOCKET_T fd, const void* buf, int sz)
+{
+    const char* ptr = (const char*)buf;
+    int remaining = sz;
+    while (remaining > 0) {
+        int sent;
+        int rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS && rc != TPM_RC_NV_RATE) return rc;
+        rc = SocketWait(fd, 1);
+        if (rc == 0) {
+            if (g_stopRequested) return TPM_RC_FAILURE;
+            continue;
+        }
+    #ifdef _WIN32
+        sent = (rc < 0) ? -1 : send(fd, ptr, remaining, 0);
+    #else
+        sent = (rc < 0) ? -1 : (int)write(fd, ptr, remaining);
+    #endif
+        if (sent <= 0) {
+        #ifdef _WIN32
+            if (WSAGetLastError() == WSAEINTR) continue;
+        #else
+            if (errno == EINTR) continue;
+        #endif
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: send error %d\n",
+            #ifdef _WIN32
+                WSAGetLastError()
+            #else
+                errno
+            #endif
+            );
+        #endif
+            return TPM_RC_FAILURE;
+        }
+        remaining -= sent;
+        ptr += sent;
+    }
+    return TPM_RC_SUCCESS;
+}
+
+#ifdef FWTPM_HAVE_WRITEV
+/* Send an iovec set, advancing over partial writes. Modifies iov. */
+static int SocketSendVec(FWTPM_CTX* ctx, SOCKET_T fd, struct iovec* iov,
+    int cnt)
+{
+    ssize_t sent;
+    int i = 0;
+
+    while (i < cnt) {
+        int rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS && rc != TPM_RC_NV_RATE) return rc;
+        rc = SocketWait(fd, 1);
+        if (rc == 0) {
+            if (g_stopRequested) return TPM_RC_FAILURE;
+            continue;
+        }
+        sent = (rc < 0) ? -1 : writev(fd, &iov[i], cnt - i);
+        if (sent < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: writev error %d\n", errno);
+        #endif
+            return TPM_RC_FAILURE;
+        }
+        if (sent == 0) {
+            /* No progress on a blocking socket with bytes outstanding */
+            return TPM_RC_FAILURE;
+        }
+        while (i < cnt && (size_t)sent >= iov[i].iov_len) {
+            sent -= (ssize_t)iov[i].iov_len;
+            i++;
+        }
+        if (i < cnt && sent > 0) {
+            iov[i].iov_base = (char*)iov[i].iov_base + sent;
+            iov[i].iov_len -= (size_t)sent;
+        }
+    }
+    return TPM_RC_SUCCESS;
+}
+#endif /* FWTPM_HAVE_WRITEV */
+
+static int SocketRecv(FWTPM_CTX* ctx, SOCKET_T fd, void* buf, int sz)
+{
+    char* ptr = (char*)buf;
+    int remaining = sz;
+    while (remaining > 0) {
+        int got;
+        int rc = FWTPM_Clock_Update(ctx);
+        if (rc != TPM_RC_SUCCESS && rc != TPM_RC_NV_RATE) return rc;
+        rc = SocketWait(fd, 0);
+        if (rc == 0) {
+            if (g_stopRequested) return TPM_RC_FAILURE;
+            continue;
+        }
+    #ifdef _WIN32
+        got = (rc < 0) ? -1 : recv(fd, ptr, remaining, 0);
+    #else
+        got = (rc < 0) ? -1 : (int)read(fd, ptr, remaining);
+    #endif
+        if (got <= 0) {
+        #ifdef _WIN32
+            if (got < 0 && WSAGetLastError() == WSAEINTR) continue;
+        #else
+            if (got < 0 && errno == EINTR) continue;
+        #endif
+        #ifdef DEBUG_WOLFTPM
+            if (got == 0) {
+                printf("fwTPM: recv EOF\n");
+            }
+            else {
+                printf("fwTPM: recv error %d\n",
+                #ifdef _WIN32
+                    WSAGetLastError()
+                #else
+                    errno
+                #endif
+                );
+            }
+        #endif
+            return TPM_RC_FAILURE;
+        }
+        remaining -= got;
+        ptr += got;
+    }
+    return TPM_RC_SUCCESS;
+}
+
+static int TransportSend(FWTPM_CTX* ctx, int type, SOCKET_T fd,
+    const void* buf, int sz)
+{
+    if (ctx->ioHal.wait != NULL) {
+        return ctx->ioHal.send(ctx->ioHal.ctx, type, buf, sz);
+    }
+    if (fd == FWTPM_INVALID_FD) {
+        return TPM_RC_FAILURE;
+    }
+    return SocketSend(ctx, fd, buf, sz);
+}
+
+static int TransportRecv(FWTPM_CTX* ctx, int type, SOCKET_T fd,
+    void* buf, int sz)
+{
+    if (ctx->ioHal.wait != NULL) {
+        return ctx->ioHal.recv(ctx->ioHal.ctx, type, buf, sz);
+    }
+    if (fd == FWTPM_INVALID_FD) {
+        return TPM_RC_FAILURE;
+    }
+    return SocketRecv(ctx, fd, buf, sz);
+}
+
+static SOCKET_T CreateListenSocket(int port)
+{
+    SOCKET_T fd;
+    int optval = 1;
+    struct sockaddr_in addr;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == FWTPM_INVALID_FD) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: socket() failed\n");
+    #endif
+        return FWTPM_INVALID_FD;
+    }
+
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR,
+            (const char*)&optval, sizeof(optval)) != 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: setsockopt(SO_REUSEADDR) failed\n");
+    #endif
+    }
+
+    XMEMSET(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons((unsigned short)port);
+
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: bind(%d) failed\n", port);
+    #endif
+        CloseSocket(fd);
+        return FWTPM_INVALID_FD;
+    }
+
+    if (listen(fd, 1) != 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: listen(%d) failed\n", port);
+    #endif
+        CloseSocket(fd);
+        return FWTPM_INVALID_FD;
+    }
+
+    return fd;
+}
+
+/* Disable Nagle, which would hold the small mssim acknowledgement until the
+ * peer's delayed ACK. Advisory: a failure costs latency, not correctness. */
+static void SetSocketNoDelay(SOCKET_T fd)
+{
+#ifdef TCP_NODELAY
+    int optval = 1;
+
+    /* Winsock takes a char* here where POSIX takes a void*. */
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+            (const char*)&optval, sizeof(optval)) != 0) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: setsockopt(TCP_NODELAY) failed\n");
+    #endif
+    }
+#else
+    (void)fd;
+#endif
+}
+
+/* mssim reply: size(4) + response + ack(4), as one segment where the
+ * platform allows it. A custom HAL has no vectored form, so it keeps the
+ * three sequential sends. */
+static int SendMssimReply(FWTPM_CTX* ctx, SOCKET_T clientFd,
+    const byte* rsp, int rspSize)
+{
+    int rc;
+    UINT32 sizeVal = FwTpmSwapU32((UINT32)rspSize);
+    UINT32 ackVal = FwTpmSwapU32(0); /* ack = 0 (success) */
+#ifdef FWTPM_HAVE_WRITEV
+    struct iovec iov[3];
+
+    if (ctx->ioHal.wait == NULL && clientFd != FWTPM_INVALID_FD) {
+        iov[0].iov_base = &sizeVal;
+        iov[0].iov_len = sizeof(sizeVal);
+        iov[1].iov_base = (void*)rsp;
+        iov[1].iov_len = (size_t)rspSize;
+        iov[2].iov_base = &ackVal;
+        iov[2].iov_len = sizeof(ackVal);
+        return SocketSendVec(ctx, clientFd, iov, 3);
+    }
+#endif
+
+    rc = TransportSend(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &sizeVal,
+        (int)sizeof(sizeVal));
+    if (rc == TPM_RC_SUCCESS) {
+        rc = TransportSend(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, rsp,
+            rspSize);
+    }
+    if (rc == TPM_RC_SUCCESS) {
+        rc = TransportSend(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &ackVal,
+            (int)sizeof(ackVal));
+    }
+    return rc;
+}
+
+/* Build a minimal TPM error response using TPM2_Packet API */
+static int BuildErrorResponse(byte* rspBuf, UINT16 tag, TPM_RC rc)
+{
+    TPM2_Packet pkt;
+    int totalSz;
+    pkt.buf = rspBuf;
+    pkt.pos = TPM2_HEADER_SIZE;
+    pkt.size = FWTPM_MAX_COMMAND_SIZE;
+    totalSz = pkt.pos;
+    pkt.pos = 0;
+    TPM2_Packet_AppendU16(&pkt, tag);
+    TPM2_Packet_AppendU32(&pkt, (UINT32)totalSz);
+    TPM2_Packet_AppendU32(&pkt, rc);
+    return totalSz;
+}
+
+/* --- Platform port handler --- */
+static int HandlePlatformCommand(FWTPM_CTX* ctx, SOCKET_T clientFd)
+{
+    int rc;
+    UINT32 cmd;
+    UINT32 ack = 0;
+
+    rc = TransportRecv(ctx, FWTPM_IO_TYPE_PLATFORM, clientFd, &cmd, 4);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    cmd = FwTpmSwapU32(cmd);
+
+    switch (cmd) {
+        case FWTPM_TCP_SIGNAL_POWER_ON:
+            if (!ctx->powerOn) {
+                FWTPM_Clock_PowerOn(ctx);
+            }
+            ctx->powerOn = 1;
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform POWER_ON\n");
+        #endif
+            break;
+
+        case FWTPM_TCP_SIGNAL_POWER_OFF:
+            ctx->powerOn = 0;
+            ctx->wasStarted = 0;
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform POWER_OFF\n");
+        #endif
+            break;
+
+        case FWTPM_TCP_SIGNAL_NV_ON:
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform NV_ON\n");
+        #endif
+            break;
+
+        case FWTPM_TCP_SIGNAL_RESET:
+            ctx->wasStarted = 0;
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform RESET\n");
+        #endif
+            break;
+
+#ifndef FWTPM_NO_PP
+        /* Physical presence is a platform-channel signal, kept separate from
+         * the command channel so a remote command client cannot assert it. */
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_ON:
+            ctx->physicalPresence = 1;
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform PHYS_PRES ON\n");
+        #endif
+            break;
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_OFF:
+            ctx->physicalPresence = 0;
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform PHYS_PRES OFF\n");
+        #endif
+            break;
+#endif /* !FWTPM_NO_PP */
+
+        case FWTPM_TCP_SIGNAL_CANCEL_ON:
+        case FWTPM_TCP_SIGNAL_CANCEL_OFF:
+        case FWTPM_TCP_SIGNAL_HASH_START:
+        case FWTPM_TCP_SIGNAL_HASH_END:
+#ifdef FWTPM_NO_PP
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_ON:
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_OFF:
+#endif
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform signal %d (ignored)\n", cmd);
+        #endif
+            break;
+
+        case FWTPM_TCP_SESSION_END:
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform SESSION_END\n");
+        #endif
+            return FWTPM_IO_CONNECTION_CLOSED; /* no ack */
+
+        case FWTPM_TCP_STOP:
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform STOP\n");
+        #endif
+            ctx->running = 0;
+            break;
+
+        default:
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: Platform unknown command %d\n", cmd);
+        #endif
+            break;
+    }
+
+    /* Send ack (0 = success) */
+    ack = FwTpmSwapU32(0);
+    rc = TransportSend(ctx, FWTPM_IO_TYPE_PLATFORM, clientFd, &ack, 4);
+
+    return rc;
+}
+
+/* --- Handle mssim signal on command port --- */
+static int HandleMssimSignal(FWTPM_CTX* ctx, SOCKET_T clientFd, UINT32 tssCmd)
+{
+    int rc;
+    UINT32 dataSize;
+    UINT32 netVal;
+
+    if (tssCmd == FWTPM_TCP_SIGNAL_HASH_DATA) {
+        rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &netVal,
+            (int)sizeof(netVal));
+        if (rc != TPM_RC_SUCCESS) {
+            return rc;
+        }
+        dataSize = FwTpmSwapU32(netVal);
+        if (dataSize > FWTPM_MAX_COMMAND_SIZE) {
+            return TPM_RC_COMMAND_SIZE;
+        }
+        if (dataSize > 0U) {
+            rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd,
+                ctx->cmdBuf, (int)dataSize);
+            TPM2_ForceZero(ctx->cmdBuf, dataSize);
+            if (rc != TPM_RC_SUCCESS) {
+                return rc;
+            }
+        }
+    }
+
+    /* State-mutating signals (POWER_OFF/RESET) are rejected before reaching
+     * here on the command port; only POWER_ON is handled. */
+    if (tssCmd == FWTPM_TCP_SIGNAL_POWER_ON) {
+        if (!ctx->powerOn) {
+            FWTPM_Clock_PowerOn(ctx);
+        }
+        ctx->powerOn = 1;
+    }
+#ifdef DEBUG_WOLFTPM
+    printf("fwTPM: Cmd-port signal %u (ack)\n", tssCmd);
+#endif
+    netVal = FwTpmSwapU32(tssCmd == FWTPM_TCP_SIGNAL_HASH_DATA ? 1U : 0U);
+    return TransportSend(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &netVal, 4);
+}
+
+/* --- Process and send TPM command response --- */
+static int DispatchAndRespond(FWTPM_CTX* ctx, UINT32 cmdSize, int locality,
+    SOCKET_T clientFd, int isSwtpm)
+{
+    int rc;
+    int rspSize = 0;
+    int procRc;
+    int dispatched = 0;
+#ifdef WOLFTPM_SPDM_RESPONDER
+    UINT16 firstTag = (cmdSize >= 2) ? FwLoadU16BE(ctx->cmdBuf) : 0;
+    int isSpdmFrame = (firstTag == 0x8101 || firstTag == 0x8201);
+    word32 outSz;
+    UINT32 cc;
+
+    if (ctx->spdmMode != FWTPM_SPDM_MODE_OFF && isSpdmFrame) {
+        outSz = (word32)sizeof(ctx->rspBuf);
+        procRc = wolfSPDM_RespHandleMessage(ctx->spdmRespCtx,
+            ctx->cmdBuf, cmdSize, ctx->rspBuf, &outSz);
+        if (procRc == WOLFSPDM_E_FRAMING) {
+            /* Per wolfSPDM_RespHandleMessage's contract, an E_FRAMING
+             * return MUST drop the connection - it indicates a plaintext
+             * bypass attempt or other malformed inbound frame. */
+            return -1;
+        }
+        if (procRc != WOLFSPDM_SUCCESS) {
+            rspSize = BuildErrorResponse(ctx->rspBuf, TPM_ST_NO_SESSIONS,
+                TPM_RC_FAILURE);
+        }
+        else {
+            rspSize = (int)outSz;
+        }
+        dispatched = 1;
+    }
+    else if (ctx->spdmMode != FWTPM_SPDM_MODE_OFF && !isSpdmFrame &&
+             wolfSPDM_RespIsLocked(ctx->spdmRespCtx)) {
+        /* SPDMONLY locked: real silicon lets plaintext GetCapability
+         * through so wolfTPM2 can probe vendor IDs before establishing
+         * SPDM. Allowlist that one command; reject the rest. */
+        cc = (cmdSize >= 10) ? FwLoadU32BE(ctx->cmdBuf + 6) : 0;
+        if (cc == TPM_CC_GetCapability) {
+            rspSize = (int)sizeof(ctx->rspBuf);
+            procRc = FWTPM_ProcessCommand(ctx, ctx->cmdBuf, (int)cmdSize,
+                ctx->rspBuf, &rspSize, locality);
+            if (procRc != TPM_RC_SUCCESS || rspSize == 0) {
+                rspSize = BuildErrorResponse(ctx->rspBuf,
+                    TPM_ST_NO_SESSIONS, TPM_RC_FAILURE);
+            }
+        }
+        else {
+            rspSize = BuildErrorResponse(ctx->rspBuf, TPM_ST_NO_SESSIONS,
+                TPM_RC_DISABLED);
+        }
+        dispatched = 1;
+    }
+#endif
+
+    if (!dispatched) {
+        rspSize = (int)sizeof(ctx->rspBuf);
+        procRc = FWTPM_ProcessCommand(ctx, ctx->cmdBuf, (int)cmdSize,
+            ctx->rspBuf, &rspSize, locality);
+        if (procRc != TPM_RC_SUCCESS || rspSize == 0) {
+            rspSize = BuildErrorResponse(ctx->rspBuf, TPM_ST_NO_SESSIONS,
+                TPM_RC_FAILURE);
+        }
+    }
+
+    if (isSwtpm) {
+        /* swtpm protocol: raw TPM response only (no framing) */
+        rc = TransportSend(ctx, FWTPM_IO_TYPE_COMMAND, clientFd,
+            ctx->rspBuf, rspSize);
+    }
+    else {
+        rc = SendMssimReply(ctx, clientFd, ctx->rspBuf, rspSize);
+    }
+
+    return rc;
+}
+
+/* --- Check if mssim protocol signal (not SEND_COMMAND or SESSION_END) --- */
+static int IsMssimSignal(UINT32 cmd)
+{
+    switch (cmd) {
+        case FWTPM_TCP_SIGNAL_POWER_ON:
+        case FWTPM_TCP_SIGNAL_POWER_OFF:
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_ON:
+        case FWTPM_TCP_SIGNAL_PHYS_PRES_OFF:
+        case FWTPM_TCP_SIGNAL_HASH_START:
+        case FWTPM_TCP_SIGNAL_HASH_DATA:
+        case FWTPM_TCP_SIGNAL_HASH_END:
+        case FWTPM_TCP_SIGNAL_NV_ON:
+        case FWTPM_TCP_SIGNAL_CANCEL_ON:
+        case FWTPM_TCP_SIGNAL_CANCEL_OFF:
+        case FWTPM_TCP_SIGNAL_RESET:
+        case FWTPM_TCP_STOP:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* --- Command port handler (auto-detects mssim vs swtpm protocol) ---
+ * mssim: first 4 bytes are a small protocol command (1-21)
+ * swtpm: first 4 bytes are raw TPM header (tag 0x8001/0x8002 + size) */
+static int HandleCommandConnection(FWTPM_CTX* ctx, SOCKET_T clientFd)
+{
+    int rc;
+    UINT32 firstWord;
+    UINT16 tag;
+    UINT32 tssCmd;
+    UINT8 locality;
+    UINT32 cmdSize;
+    UINT32 remaining;
+    UINT32 netVal;
+
+    /* Read first 4 bytes to determine protocol */
+    rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &firstWord, 4);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    /* SPDM-mode payload inspection now lives in DispatchAndRespond after
+     * MSSIM unwrap, so the wolfTPM SWTPM client (which always MSSIM-wraps)
+     * works alongside the bus-snooping defence. */
+
+    /* Check if this looks like a raw TPM command (swtpm protocol).
+     * TPM commands start with tag 0x8001 or 0x8002 in big-endian. */
+    tag = FwLoadU16BE((byte*)&firstWord);
+    if (tag == TPM_ST_NO_SESSIONS || tag == TPM_ST_SESSIONS) {
+        /* swtpm protocol: firstWord is the beginning of a raw TPM command.
+         * Parse size from TPM header (bytes 2-5), read remaining bytes. */
+
+        /* We already have 4 bytes (tag + start of size). Read 6 more to
+         * complete the 10-byte TPM header (tag(2) + size(4) + cc(4)). */
+        XMEMCPY(ctx->cmdBuf, &firstWord, 4);
+        rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd,
+            ctx->cmdBuf + 4, 6);
+        if (rc != TPM_RC_SUCCESS) {
+            return rc;
+        }
+        cmdSize = FwLoadU32BE(ctx->cmdBuf + 2);
+
+        if (cmdSize < TPM2_HEADER_SIZE || cmdSize > FWTPM_MAX_COMMAND_SIZE) {
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: swtpm command size invalid: %u\n", cmdSize);
+        #endif
+            return TPM_RC_COMMAND_SIZE;
+        }
+
+        /* Read remaining command bytes */
+        remaining = cmdSize - TPM2_HEADER_SIZE;
+        if (remaining > 0) {
+            rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd,
+                ctx->cmdBuf + TPM2_HEADER_SIZE, (int)remaining);
+            if (rc != TPM_RC_SUCCESS) {
+                return rc;
+            }
+        }
+
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: swtpm raw command (size=%u)\n", cmdSize);
+    #endif
+
+        return DispatchAndRespond(ctx, cmdSize, 0, clientFd, 1);
+    }
+
+    /* mssim protocol: firstWord is a protocol command code */
+    tssCmd = FwTpmSwapU32(firstWord);
+
+    if (tssCmd == FWTPM_TCP_SESSION_END) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: Command SESSION_END\n");
+    #endif
+        return FWTPM_IO_CONNECTION_CLOSED;
+    }
+
+    /* State-mutating platform signals belong on the platform port, not the
+     * unauthenticated command port; reject them here. */
+    if (tssCmd == FWTPM_TCP_SIGNAL_POWER_OFF ||
+        tssCmd == FWTPM_TCP_SIGNAL_RESET ||
+        tssCmd == FWTPM_TCP_STOP) {
+        return TPM_RC_FAILURE;
+    }
+
+    /* Handle remaining (non state-mutating) platform signals on command port */
+    if (IsMssimSignal(tssCmd)) {
+        return HandleMssimSignal(ctx, clientFd, tssCmd);
+    }
+
+    if (tssCmd != FWTPM_TCP_SEND_COMMAND) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: Unknown command code %u\n", tssCmd);
+    #endif
+        return TPM_RC_FAILURE;
+    }
+
+    /* mssim SEND_COMMAND: locality(1) + size(4) + command */
+    rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &locality, 1);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, &netVal, 4);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+    cmdSize = FwTpmSwapU32(netVal);
+
+    if (cmdSize < TPM2_HEADER_SIZE || cmdSize > FWTPM_MAX_COMMAND_SIZE) {
+    #ifdef DEBUG_WOLFTPM
+        printf("fwTPM: Command size invalid: %u\n", cmdSize);
+    #endif
+        return TPM_RC_COMMAND_SIZE;
+    }
+
+    rc = TransportRecv(ctx, FWTPM_IO_TYPE_COMMAND, clientFd, ctx->cmdBuf,
+        (int)cmdSize);
+    if (rc != TPM_RC_SUCCESS) {
+        return rc;
+    }
+
+    return DispatchAndRespond(ctx, cmdSize, (int)locality, clientFd, 0);
+}
+
+static void CustomOpen(FWTPM_CTX* ctx, int type)
+{
+    ctx->io.customConnMask |= 1U << (unsigned int)type;
+}
+
+static void CustomClose(FWTPM_CTX* ctx, int type)
+{
+    unsigned int mask = 1U << (unsigned int)type;
+
+    if ((ctx->io.customConnMask & mask) != 0U) {
+        ctx->io.customConnMask &= ~mask;
+        if (ctx->ioHal.close_conn != NULL) {
+            ctx->ioHal.close_conn(ctx->ioHal.ctx, type);
+        }
+    }
+}
+
+static int CustomServerLoop(FWTPM_CTX* ctx)
+{
+    int rc = TPM_RC_SUCCESS;
+    int events;
+
+    ctx->running = 1;
+    while (ctx->running) {
+        rc = FWTPM_Clock_Update(ctx);
+        if (rc == TPM_RC_NV_RATE) {
+            rc = TPM_RC_SUCCESS; /* retried on the next pass */
+        }
+        if (rc != TPM_RC_SUCCESS) {
+            break;
+        }
+        if (g_stopRequested) {
+            ctx->running = 0;
+            break;
+        }
+
+        events = ctx->ioHal.wait(ctx->ioHal.ctx,
+            FWTPM_IO_WAIT_TIMEOUT_MS < (int)FWTPM_CLOCK_POLL_MS ?
+                FWTPM_IO_WAIT_TIMEOUT_MS : (int)FWTPM_CLOCK_POLL_MS);
+        if (g_stopRequested) {
+            ctx->running = 0;
+            break;
+        }
+        if (events < 0 ||
+                (events & ~(FWTPM_IO_READY_COMMAND |
+                            FWTPM_IO_READY_PLATFORM |
+                            FWTPM_IO_ACCEPT_COMMAND |
+                            FWTPM_IO_ACCEPT_PLATFORM)) != 0) {
+            rc = TPM_RC_FAILURE;
+            break;
+        }
+
+        if ((events & FWTPM_IO_ACCEPT_PLATFORM) != 0 &&
+                ctx->ioHal.accept != NULL) {
+            if (ctx->ioHal.accept(ctx->ioHal.ctx,
+                    FWTPM_IO_TYPE_PLATFORM) != TPM_RC_SUCCESS) {
+                events &= ~FWTPM_IO_READY_PLATFORM;
+            }
+            else {
+                CustomOpen(ctx, FWTPM_IO_TYPE_PLATFORM);
+            }
+        }
+        if ((events & FWTPM_IO_ACCEPT_COMMAND) != 0 &&
+                ctx->ioHal.accept != NULL) {
+            if (ctx->ioHal.accept(ctx->ioHal.ctx,
+                    FWTPM_IO_TYPE_COMMAND) != TPM_RC_SUCCESS) {
+                events &= ~FWTPM_IO_READY_COMMAND;
+            }
+            else {
+                CustomOpen(ctx, FWTPM_IO_TYPE_COMMAND);
+            }
+        }
+
+        if ((events & FWTPM_IO_READY_PLATFORM) != 0) {
+            CustomOpen(ctx, FWTPM_IO_TYPE_PLATFORM);
+            if (HandlePlatformCommand(ctx, FWTPM_INVALID_FD) !=
+                    TPM_RC_SUCCESS) {
+                CustomClose(ctx, FWTPM_IO_TYPE_PLATFORM);
+            }
+        }
+        if ((events & FWTPM_IO_READY_COMMAND) != 0) {
+            CustomOpen(ctx, FWTPM_IO_TYPE_COMMAND);
+            if (HandleCommandConnection(ctx, FWTPM_INVALID_FD) !=
+                    TPM_RC_SUCCESS) {
+                CustomClose(ctx, FWTPM_IO_TYPE_COMMAND);
+            }
+        }
+    }
+
+    return rc;
+}
+
+#endif /* !WOLFTPM_FWTPM_TIS */
+
+/* --- Public API --- */
+
+#ifndef WOLFTPM_FWTPM_TIS
+int FWTPM_IO_SetHAL(FWTPM_CTX* ctx, FWTPM_IO_HAL* hal)
+{
+    if (ctx == NULL || hal == NULL || hal->send == NULL ||
+            hal->recv == NULL || hal->wait == NULL ||
+            (hal->accept != NULL && hal->close_conn == NULL)) {
+        return BAD_FUNC_ARG;
+    }
+    XMEMCPY(&ctx->ioHal, hal, sizeof(FWTPM_IO_HAL));
+    return TPM_RC_SUCCESS;
+}
+#endif
+
+int FWTPM_IO_Init(FWTPM_CTX* ctx)
+{
+#if !defined(WOLFTPM_FWTPM_TIS) && defined(_WIN32)
+    WSADATA wsaData;
+#endif
+
+    if (ctx == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+#ifdef WOLFTPM_FWTPM_TIS
+    return FWTPM_TIS_Init(ctx);
+#else
+    if (ctx->ioHal.wait != NULL) {
+        if (ctx->ioHal.send == NULL || ctx->ioHal.recv == NULL) {
+            return BAD_FUNC_ARG;
+        }
+        ctx->io.customConnMask = 0U;
+        if (ctx->ioHal.accept == NULL) {
+            CustomOpen(ctx, FWTPM_IO_TYPE_COMMAND);
+            CustomOpen(ctx, FWTPM_IO_TYPE_PLATFORM);
+        }
+        return TPM_RC_SUCCESS;
+    }
+#ifdef _WIN32
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        fprintf(stderr, "fwTPM: WSAStartup failed\n");
+        return TPM_RC_FAILURE;
+    }
+#endif
+    XMEMSET(&ctx->io, 0, sizeof(ctx->io));
+    ctx->io.listenFd = FWTPM_INVALID_FD;
+    ctx->io.platListenFd = FWTPM_INVALID_FD;
+    ctx->io.clientFd = FWTPM_INVALID_FD;
+    ctx->io.platClientFd = FWTPM_INVALID_FD;
+
+    /* Create command port listener */
+    ctx->io.listenFd = CreateListenSocket(ctx->cmdPort);
+    if (ctx->io.listenFd == FWTPM_INVALID_FD) {
+        fprintf(stderr, "fwTPM: Failed to listen on command port %d\n",
+            ctx->cmdPort);
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
+        return TPM_RC_FAILURE;
+    }
+
+    /* Create platform port listener */
+    ctx->io.platListenFd = CreateListenSocket(ctx->platPort);
+    if (ctx->io.platListenFd == FWTPM_INVALID_FD) {
+        fprintf(stderr, "fwTPM: Failed to listen on platform port %d\n",
+            ctx->platPort);
+        CloseSocket(ctx->io.listenFd);
+        ctx->io.listenFd = FWTPM_INVALID_FD;
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
+        return TPM_RC_FAILURE;
+    }
+
+    printf("fwTPM: Listening on command port %d, platform port %d\n",
+        ctx->cmdPort, ctx->platPort);
+
+    return TPM_RC_SUCCESS;
+#endif /* !WOLFTPM_FWTPM_TIS */
+}
+
+void FWTPM_IO_Cleanup(FWTPM_CTX* ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+
+#ifdef WOLFTPM_FWTPM_TIS
+    FWTPM_TIS_Cleanup(ctx);
+#else
+    if (ctx->ioHal.wait != NULL) {
+        CustomClose(ctx, FWTPM_IO_TYPE_COMMAND);
+        CustomClose(ctx, FWTPM_IO_TYPE_PLATFORM);
+        return;
+    }
+    if (ctx->io.clientFd != FWTPM_INVALID_FD) {
+        CloseSocket(ctx->io.clientFd);
+        ctx->io.clientFd = FWTPM_INVALID_FD;
+    }
+    if (ctx->io.platClientFd != FWTPM_INVALID_FD) {
+        CloseSocket(ctx->io.platClientFd);
+        ctx->io.platClientFd = FWTPM_INVALID_FD;
+    }
+    if (ctx->io.listenFd != FWTPM_INVALID_FD) {
+        CloseSocket(ctx->io.listenFd);
+        ctx->io.listenFd = FWTPM_INVALID_FD;
+    }
+    if (ctx->io.platListenFd != FWTPM_INVALID_FD) {
+        CloseSocket(ctx->io.platListenFd);
+        ctx->io.platListenFd = FWTPM_INVALID_FD;
+    }
+#ifdef _WIN32
+    WSACleanup();
+#endif
+#endif /* !WOLFTPM_FWTPM_TIS */
+}
+
+int FWTPM_IO_ServerLoop(FWTPM_CTX* ctx)
+{
+#ifndef WOLFTPM_FWTPM_TIS
+    int rc = TPM_RC_SUCCESS;
+    fd_set readFds;
+    SOCKET_T maxFd;
+    SOCKET_T cmdFds[FWTPM_MAX_COMMAND_CLIENTS];
+    SOCKET_T platFd = FWTPM_INVALID_FD;  /* active platform client fd */
+    struct timeval tv;
+    int selRc;
+    int i;
+#ifndef _WIN32
+    struct sigaction sa;
+#endif
+#endif
+
+    if (ctx == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+#ifdef WOLFTPM_FWTPM_TIS
+    return FWTPM_TIS_ServerLoop(ctx);
+#else
+    if (ctx->ioHal.wait != NULL) {
+        return CustomServerLoop(ctx);
+    }
+
+    ctx->running = 1;
+    for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
+        cmdFds[i] = FWTPM_INVALID_FD;
+    }
+
+#ifndef _WIN32
+    /* Ignore SIGPIPE so write to closed socket returns error instead
+     * of killing the process */
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGPIPE, &sa, NULL);
+#endif
+
+    /* Multiplexed select loop: handles listen sockets AND active client fds
+     * simultaneously.  This is required because the mssim TCTI opens both
+     * port 2321 (command) and port 2322 (platform) concurrently and keeps
+     * the command connection open while sending POWER_ON on the platform port.
+     * A sequential accept/handle loop would deadlock here. */
+    while (ctx->running) {
+        rc = FWTPM_Clock_Update(ctx);
+        if (rc == TPM_RC_NV_RATE) {
+            rc = TPM_RC_SUCCESS; /* retried on the next pass */
+        }
+        if (rc != TPM_RC_SUCCESS) {
+            break;
+        }
+        /* Propagate async stop request into ctx state from normal
+         * control flow (signal handler only sets the volatile flag). */
+        if (g_stopRequested) {
+            ctx->running = 0;
+            break;
+        }
+        FD_ZERO(&readFds);
+        FD_SET(ctx->io.listenFd, &readFds);
+        FD_SET(ctx->io.platListenFd, &readFds);
+        maxFd = ctx->io.listenFd;
+        if (ctx->io.platListenFd > maxFd)
+            maxFd = ctx->io.platListenFd;
+
+        /* Watch active client connections for incoming data */
+        for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
+            if (cmdFds[i] != FWTPM_INVALID_FD) {
+                FD_SET(cmdFds[i], &readFds);
+                if (cmdFds[i] > maxFd) {
+                    maxFd = cmdFds[i];
+                }
+            }
+        }
+        if (platFd != FWTPM_INVALID_FD) {
+            FD_SET(platFd, &readFds);
+            if (platFd > maxFd) maxFd = platFd;
+        }
+
+        tv.tv_sec = FWTPM_CLOCK_POLL_MS / 1000;
+        tv.tv_usec = 0;
+        /* Windows ignores the first argument and its SOCKET does not fit an
+         * int; everywhere else it is the descriptor bound and does. */
+        selRc = select((int)(maxFd + 1), &readFds, NULL, NULL, &tv);
+        if (selRc < 0) {
+        #ifdef _WIN32
+            if (WSAGetLastError() == WSAEINTR) continue;
+        #else
+            if (errno == EINTR) continue;
+        #endif
+        #ifdef DEBUG_WOLFTPM
+            printf("fwTPM: select error\n");
+        #endif
+            rc = TPM_RC_FAILURE;
+            break;
+        }
+        if (selRc == 0) {
+            continue; /* timeout — recheck ctx->running */
+        }
+
+        /* Accept new platform connection */
+        if (FD_ISSET(ctx->io.platListenFd, &readFds)) {
+            SOCKET_T newFd = accept(ctx->io.platListenFd, NULL, NULL);
+            if (newFd != FWTPM_INVALID_FD) {
+                SetSocketNoDelay(newFd);
+                if (platFd != FWTPM_INVALID_FD) {
+                #ifdef DEBUG_WOLFTPM
+                    printf("fwTPM: platform connection replaced\n");
+                #endif
+                    CloseSocket(platFd);
+                }
+                platFd = newFd;
+            }
+        }
+
+        /* Handle one message from active platform client */
+        if (platFd != FWTPM_INVALID_FD && FD_ISSET(platFd, &readFds)) {
+            if (HandlePlatformCommand(ctx, platFd) != TPM_RC_SUCCESS) {
+                CloseSocket(platFd);
+                platFd = FWTPM_INVALID_FD;
+            }
+        }
+
+        /* Handle one message from each ready command client */
+        for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
+            if (cmdFds[i] != FWTPM_INVALID_FD &&
+                    FD_ISSET(cmdFds[i], &readFds)) {
+                if (HandleCommandConnection(ctx, cmdFds[i]) !=
+                        TPM_RC_SUCCESS) {
+                    CloseSocket(cmdFds[i]);
+                    cmdFds[i] = FWTPM_INVALID_FD;
+                }
+            }
+        }
+
+        /* Accept new command connection */
+        if (FD_ISSET(ctx->io.listenFd, &readFds)) {
+            SOCKET_T newFd = accept(ctx->io.listenFd, NULL, NULL);
+            if (newFd != FWTPM_INVALID_FD) {
+                SetSocketNoDelay(newFd);
+                for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
+                    if (cmdFds[i] == FWTPM_INVALID_FD) {
+                        cmdFds[i] = newFd;
+                        break;
+                    }
+                }
+                if (i == FWTPM_MAX_COMMAND_CLIENTS) {
+                #ifdef DEBUG_WOLFTPM
+                    printf("fwTPM: too many command connections\n");
+                #endif
+                    CloseSocket(newFd);
+                }
+            }
+        }
+    }
+
+    for (i = 0; i < FWTPM_MAX_COMMAND_CLIENTS; i++) {
+        if (cmdFds[i] != FWTPM_INVALID_FD) {
+            CloseSocket(cmdFds[i]);
+        }
+    }
+    if (platFd != FWTPM_INVALID_FD) {
+        CloseSocket(platFd);
+    }
+
+    return rc;
+#endif /* !WOLFTPM_FWTPM_TIS */
+}
+
+#endif /* WOLFTPM_FWTPM */

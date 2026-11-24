@@ -1,0 +1,210 @@
+/* tpm2_asn.h
+ *
+ * Copyright (C) 2006-2026 wolfSSL Inc.
+ *
+ * This file is part of wolfTPM.
+ *
+ * wolfTPM is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfTPM is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+#ifndef WOLFTPM_TPM2_ASN_H
+#define WOLFTPM_TPM2_ASN_H
+
+#include <wolftpm/tpm2.h>
+#include <wolftpm/tpm2_types.h>
+
+#ifndef WOLFTPM2_NO_ASN
+
+#ifdef __cplusplus
+    extern "C" {
+#endif
+
+#ifndef MAX_CERT_SZ
+#define MAX_CERT_SZ 2048
+#endif
+
+/* ASN Error Codes.
+ * Spelled TPM_RC_ASN_* so they cannot shadow the TPM response codes of the
+ * same short name in tpm2.h: TPM_RC_VALUE there is an enum equal to 0x084 and
+ * TPM_RC_INSUFFICIENT is 0x09A. Because those are enum constants rather than
+ * macros, a #ifndef guard cannot see them, so any file including both headers
+ * silently got the ASN meaning. */
+#define TPM_RC_ASN_PARSE        (-201)  /* ASN parsing error */
+#define TPM_RC_ASN_INSUFFICIENT (-202)  /* ASN insufficient data */
+#define TPM_RC_ASN_VALUE        (-203)  /* ASN value error (invalid tag) */
+#define TPM_RC_ASN_BUFFER       (-204)  /* ASN buffer error */
+
+/* Deprecated short spellings, kept so existing callers still build. They
+ * shadow the tpm2.h response codes of the same name, so prefer the
+ * TPM_RC_ASN_* forms above. Define WOLFTPM_NO_DEPRECATED_ASN_RC to drop them
+ * and get the tpm2.h meanings instead. */
+#ifndef WOLFTPM_NO_DEPRECATED_ASN_RC
+    #define TPM_RC_INSUFFICIENT  TPM_RC_ASN_INSUFFICIENT
+    #define TPM_RC_VALUE         TPM_RC_ASN_VALUE
+    #define TPM_RC_BUFFER        TPM_RC_ASN_BUFFER
+#endif
+
+/* ASN.1 Constants */
+enum {
+    TPM2_ASN_SEQUENCE         = 0x10,
+    TPM2_ASN_CONSTRUCTED      = 0x20,
+    TPM2_ASN_CONTEXT_SPECIFIC = 0x80,
+    TPM2_ASN_LONG_LENGTH      = 0x80,
+    TPM2_ASN_INTEGER          = 0x02,
+    TPM2_ASN_BIT_STRING       = 0x03,
+    TPM2_ASN_OCTET_STRING     = 0x04,
+    TPM2_ASN_TAG_NULL         = 0x05,
+    TPM2_ASN_OBJECT_ID        = 0x06,
+    TPM2_ASN_SET              = 0x11
+};
+
+#if defined(WOLFTPM2_NO_WOLFCRYPT) || defined(NO_RSA)
+#define RSA_BLOCK_TYPE_1 1
+#define RSA_BLOCK_TYPE_2 2
+#endif
+
+/* ASN.1 Decoder Types */
+typedef struct DecodedX509 {
+    word32 certBegin;
+    byte*  cert;                /* pointer to start of cert */
+    word32 certSz;
+    byte*  publicKey;           /* pointer to public key */
+    word32 pubKeySz;
+    byte*  signature;           /* pointer to signature */
+    word32 sigSz;              /* length of signature */
+    byte*  issuer;              /* pointer to issuer Name (SEQUENCE TLV) */
+    word32 issuerSz;
+    byte*  subject;             /* pointer to subject Name (SEQUENCE TLV) */
+    word32 subjectSz;
+} DecodedX509;
+
+/* ASN.1 Decoder Functions */
+/*!
+    \ingroup ASN
+    \brief Decodes ASN.1 length with length checking enabled
+    \param input Buffer containing ASN.1 data
+    \param inOutIdx Current position in buffer, updated to new position
+    \param len Decoded length value
+    \param maxIdx Maximum allowed index in buffer
+    \return Length on success, TPM_RC_ASN_INSUFFICIENT on buffer error
+*/
+WOLFTPM_API int TPM2_ASN_GetLength(const uint8_t* input, word32* inOutIdx,
+    int* len, word32 maxIdx);
+
+/*!
+    \ingroup ASN
+    \brief Decodes ASN.1 length with optional length checking
+    \param input Buffer containing ASN.1 data
+    \param inOutIdx Current position in buffer, updated to new position
+    \param len Decoded length value
+    \param maxIdx Maximum allowed index in buffer
+    \param check Flag to enable length validation
+    \return Length on success, TPM_RC_ASN_INSUFFICIENT on buffer error
+*/
+WOLFTPM_API int TPM2_ASN_GetLength_ex(const uint8_t* input, word32* inOutIdx,
+    int* len, word32 maxIdx, int check);
+
+/*!
+    \ingroup ASN
+    \brief Decodes ASN.1 tag and validates length
+    \param input Buffer containing ASN.1 data
+    \param inputSz Size of input buffer
+    \param inOutIdx Current position in buffer, updated to new position
+    \param tag_len Decoded length value
+    \param tag Expected ASN.1 tag value
+    \return 0 on success, TPM_RC_ASN_INSUFFICIENT on buffer error, TPM_RC_ASN_VALUE on tag mismatch
+*/
+WOLFTPM_API int TPM2_ASN_DecodeTag(const uint8_t* input, int inputSz,
+    int* inOutIdx, int* tag_len, uint8_t tag);
+
+/*!
+    \ingroup ASN
+    \brief Decodes RSA signature from ASN.1 format
+    \param pInput Pointer to buffer containing ASN.1 encoded RSA signature
+    \param inputSz Size of input buffer
+    \return Size of decoded signature on success, TPM_RC_ASN_VALUE on invalid input,
+            TPM_RC_ASN_INSUFFICIENT on buffer error
+*/
+WOLFTPM_API int TPM2_ASN_RsaDecodeSignature(uint8_t** pInput, int inputSz);
+
+/*!
+    \brief Decodes an X.509 certificate
+    \param input Buffer containing ASN.1 encoded X.509 certificate
+    \param inputSz Size of input buffer
+    \param x509 Structure to store decoded certificate data
+    \return 0 on success, TPM_RC_ASN_VALUE on invalid input, TPM_RC_ASN_INSUFFICIENT on buffer error
+*/
+WOLFTPM_API int TPM2_ASN_DecodeX509Cert(uint8_t* input, int inputSz,
+    DecodedX509* x509);
+
+/*!
+    \ingroup ASN
+    \brief Finds the first attribute with a given OID in an X.509 Name, such as
+        DecodedX509.subject or DecodedX509.issuer
+    \param name Buffer containing the DER encoded Name (SEQUENCE TLV)
+    \param nameSz Size of name buffer
+    \param oid DER content bytes of the attribute type OID (no tag or length),
+        for example {0x55, 0x04, 0x03} for commonName
+    \param oidSz Size of oid
+    \param value Set to point at the attribute value inside name (not NUL
+        terminated)
+    \param valueSz Set to the size of the attribute value
+    \return 0 on success, TPM_RC_ASN_VALUE if the attribute is not present,
+        on a bad argument or on malformed DER, TPM_RC_ASN_INSUFFICIENT if a
+        length runs past the end of name
+*/
+WOLFTPM_API int TPM2_ASN_GetNameAttr(const uint8_t* name, word32 nameSz,
+    const uint8_t* oid, word32 oidSz, const uint8_t** value, word32* valueSz);
+
+/*!
+    \ingroup ASN
+    \brief Decodes RSA public key from ASN.1 format into TPM2B_PUBLIC structure
+    \param input Buffer containing ASN.1 encoded RSA public key
+    \param inputSz Size of input buffer
+    \param pub TPM2B_PUBLIC structure to store decoded key
+    \return 0 on success, TPM_RC_ASN_VALUE on invalid input,
+        TPM_RC_ASN_INSUFFICIENT on buffer error
+*/
+WOLFTPM_API int TPM2_ASN_DecodeRsaPubKey(uint8_t* input, int inputSz,
+    TPM2B_PUBLIC* pub);
+
+/*!
+    \ingroup ASN
+    \brief Removes PKCS#1 v1.5 padding from RSA signature. The padding checks
+        are not constant time, so this must only be used on public signature
+        data such as the output of an RSA public key operation. Do not apply it
+        to a value recovered with a private key.
+    \param pSig Pointer to buffer containing padded signature, updated to point
+        to unpadded data
+    \param sigSz Size of signature buffer, updated with unpadded size
+    \return 0 on success, TPM_RC_ASN_VALUE on invalid padding
+*/
+WOLFTPM_API int TPM2_ASN_RsaUnpadPkcsv15(uint8_t** pSig, int* sigSz);
+
+/*!
+    \ingroup ASN
+    \brief Removes leading zero bytes from a buffer
+    \param in Pointer to input buffer containing data to trim
+    \param len Pointer to length of input buffer, updated with new length after trimming
+    \return Pointer to the trimmed buffer (may be same as input if no trimming needed)
+*/
+WOLFTPM_API byte* TPM2_ASN_TrimZeros(byte* in, word32* len);
+
+#ifdef __cplusplus
+    }  /* extern "C" */
+#endif
+
+#endif /* !WOLFTPM2_NO_ASN */
+#endif /* WOLFTPM_TPM2_ASN_H */
