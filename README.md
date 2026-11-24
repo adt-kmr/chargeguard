@@ -25,8 +25,8 @@ The repository has three layers:
 
 | Layer | What it is | Status |
 |---|---|---|
-| **Verification app** | Orchestrator, five checks, trust engine, compliance mapper, signed evidence report, live dashboard, charger simulator and attack modes | Runs end to end today (`python main.py`) |
-| **Security integration layer** | [`attestation/`](attestation/README.md) for TPM 2.0 identity, and [`integrations/`](integrations/README.md) adapters for firmware integrity, firmware audit, behaviour baseline, evidence bundles and the attack lab | Implemented and unit-tested; not yet wired into the dashboard path |
+| **Live verification system** | An OCPP 1.6-J charger process, the ChargeGuard gateway that terminates its connection inline, real C1–C4 checks on what the gateway observes, trust engine, enforcement, advisor, signed evidence and the live dashboard | Runs end to end today (`python main.py`); 10 attack scenarios verified, see [DEMO.md](DEMO.md) |
+| **Security integration layer** | [`attestation/`](attestation/README.md) for TPM 2.0 identity, and [`integrations/`](integrations/README.md) adapters for firmware integrity, firmware audit, behaviour baseline, evidence bundles and the attack lab | Attestation verifier and behaviour baseline run in the live path; the external-tool adapters are unit-tested and used in audit mode |
 | **Vendored toolchain** | 25 open-source security tools in [`vendor/`](vendor/README.md), grouped by capability, with license notices | Source snapshots; built per tool as needed |
 
 ## Contents
@@ -89,10 +89,10 @@ ChargeGuard applies that brief to one high-value device class. It fits two of th
 | Run entirely on Arm edge hardware, no cloud | Python services on a Raspberry Pi 5 class node; all lookups against local SQLite; offline signing and verification | Verification path runs locally. The dashboard page loads three.js and anime.js from a CDN; bundling them locally is on the [roadmap](#roadmap) |
 | Monitor and classify network traffic for anomalies and intrusions | C4 behaviour monitor: per-charger baseline of peers, ports, message rates and protocol phases; detects port scans, C2 beacons, DNS exfiltration and floods ([`integrations/behavior`](integrations/behavior/baseline.py)) | Rule-based detector implemented and tested against all simulator attack modes. A learned traffic classifier is planned |
 | IoT device behaviour monitoring | Same baseline, plus packet-capture inputs (iotaudit, tshark MQTT) | Implemented as adapters |
-| Explain threats to non-expert users in plain language | Every verdict carries a one-sentence reason (for example *"charger runs authentic firmware but contains 3 known CVE(s) (max CVSS 9.8). Firmware upgrade recommended"*) | Template-based today. A Llama advisor is planned (below) |
+| Explain threats to non-expert users in plain language | [`advisor/`](advisor/engines.py) turns each signed verdict into a plain-language explanation, the risk, and up to three remediation steps, shown on the dashboard and stored in the report | Rule-based engine grounded in the evidence runs today and is labelled as such; the Llama engine is implemented against ExecuTorch's runner and activates when the model is exported |
 | Recommend remediation actions | Verdict reasons include the action. The behaviour monitor outputs block, isolate or rate-limit and renders a wolfSentry firewall policy | Implemented |
 | Offline threat intelligence | Firmware is audited once (SBOM, CVEs, secrets, hardening) and the result is cached by firmware hash for offline lookup | Implemented in the integration layer |
-| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | On-device advisor that turns the verdict and findings into an explanation and remediation steps | **Planned, not in the repository yet**. Design in [Arm architecture and tools](#arm-architecture-and-tools) |
+| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | `LlamaExecuTorchAdvisor` in [`advisor/engines.py`](advisor/engines.py): builds a Llama 3.2 chat prompt from the evidence and runs ExecuTorch's `llama_main` runner on the CPU, with a grounded fallback | **Integration code in place; model export and on-device run not done yet**. Design in [Arm architecture and tools](#arm-architecture-and-tools) |
 | Phishing URL and scam-message detection | Not part of the charger threat model. A charger console URL / QR-code checker for drivers is a candidate extension | Not implemented |
 
 ## How it works
@@ -110,11 +110,13 @@ The design budget is 5 seconds, split into fixed windows ([`config.py`](config.p
 
 | Window | Check | Question | How it is answered |
 |---|---|---|---|
-| 0.0 – 1.0 s | **C1 Identity** | Is this really that charger? | Challenge-response: the node sends a nonce, the charger signs it with its device key, and the node verifies the signature against the enrolled key. The TPM 2.0 quote path (PCRs + attestation key) is in [`attestation/`](attestation/README.md) |
-| 1.0 – 2.0 s | **C2 Integrity** | Is its software untampered? | Firmware hash is looked up in the signed registry, then the vendor signature is verified |
+| 0.0 – 1.0 s | **C1 Identity** | Is this really that charger? | The gateway sends a nonce over OCPP `DataTransfer`; the charger returns a signature from its device key and a TPM quote over PCR0. Both are verified against the enrolled keys ([`gateway/checks.py`](gateway/checks.py), [`attestation/`](attestation/README.md)) |
+| 1.0 – 2.0 s | **C2 Integrity** | Is its software untampered? | Firmware hash is looked up in the vendor registry, the vendor signature is verified, and the measured-boot PCR0 from the quote must equal the golden value for that image |
 | 2.0 – 3.0 s | **C3 Weaknesses** | Does it contain known weaknesses? | Lookup of the firmware hash in the pre-audit CVE database |
-| 3.0 – 4.5 s | **C4 Behaviour** | Is it acting normally right now? | Live traffic sample compared with the charger's baseline |
-| 4.5 – 5.0 s | **C5 Verdict** | Should we trust it? | Trust engine fuses the four results and the report is signed |
+| 3.0 – 4.5 s | **C4 Behaviour** | Is it acting normally right now? | The OCPP messages the gateway saw inline and the flow records from the network tap are compared with the charger's baseline; monitoring continues for the whole session |
+| 4.5 – 5.0 s | **C5 Verdict** | Should we trust it? | Trust engine fuses the four results, the gateway gates `Authorize`/`StartTransaction` on it, and the report is signed |
+
+The checks themselves take milliseconds (shown next to each check on the dashboard and in the report); the dashboard holds each step to its window so an audience can follow it.
 
 ### Trust engine rules
 
@@ -172,27 +174,29 @@ flowchart LR
 
 | ID | Component | Location |
 |---|---|---|
-| C1 | Identity and attestation | [`checks/identity`](checks/identity/identity_check.py), [`attestation/`](attestation/README.md) (TPM 2.0: software TPM, tpm2-tss, Keylime verifier, IBM TPM emulator) |
+| C1 | Identity and attestation | [`gateway/checks.py`](gateway/checks.py) (live), [`attestation/`](attestation/README.md) (TPM 2.0: software TPM, tpm2-tss, Keylime verifier, IBM TPM emulator) |
 | C2 | Firmware integrity and secure update | [`checks/integrity`](checks/integrity/integrity_check.py), [`integrations/integrity`](integrations/integrity/__init__.py) (MCUboot, wolfBoot, RAUC, SWUpdate, Cosign, TUF) |
 | C3 | Vulnerability and supply-chain audit | [`checks/weaknesses`](checks/weaknesses/weakness_check.py), [`integrations/vulnerability`](integrations/vulnerability/__init__.py) (unblob, Syft, Grype, cve-bin-tool, mithril, checksec, kernel-hardening-checker, EMBA, FACT) |
-| C4 | Live behaviour monitor | [`checks/behavior`](checks/behavior/behavior_check.py), [`integrations/behavior`](integrations/behavior/__init__.py) (baseline rules, iotaudit, tshark MQTT, wolfSentry policy) |
+| C4 | Live behaviour monitor | [`gateway/csms.py`](gateway/csms.py) (inline OCPP + continuous monitoring + enforcement), [`gateway/sensor.py`](gateway/sensor.py) (flow collector), [`integrations/behavior`](integrations/behavior/__init__.py) (baseline rules, iotaudit, tshark MQTT, wolfSentry policy) |
 | C5 | Orchestrator and trust engine | [`orchestrator/`](orchestrator/orchestrator.py) |
 | C6 | Compliance mapper | [`policy/compliance_map.yaml`](policy/compliance_map.yaml), [`policy/mapper.py`](policy/mapper.py) |
 | C7 | Evidence bundle | [`evidence/`](evidence/report_generator.py) (signed SARIF-structured report), [`integrations/evidence`](integrations/evidence/bundle.py) (SARIF 2.1.0 + CycloneDX + SHA-256 manifest + Cosign) |
 | C8 | Dashboard | [`dashboard/`](dashboard/main.py) (FastAPI + WebSocket, single-page UI with a 3D scene) |
 | C9 | Attack and test harness | [`simulator/attacker.py`](simulator/attacker.py), [`integrations/attack_lab`](integrations/attack_lab/scenarios.py) (Renode, IoTGoat, Bruce, Facedancer) |
-| C10 | Charger simulator | [`simulator/charger.py`](simulator/charger.py) |
+| C10 | Charger | [`charger/agent.py`](charger/agent.py): OCPP 1.6-J charge point process (boot, heartbeat, authorise, transaction, meter values, attestation responder); [`simlab/`](simlab/scenarios.py) stages scenarios and simulates the network tap |
 
 ## Demo scenarios
 
-The simulator reproduces the four demo acts. The verdicts below come from the committed benchmark run ([`benchmarks/results/amd64-win32.json`](benchmarks/results/amd64-win32.json), `end_to_end`):
+Each scenario launches the charger as its own OCPP 1.6 process plus the network tap, and the gateway verifies it live. The verdicts below come from the committed run of all scenarios ([`benchmarks/results/scenario_matrix.json`](benchmarks/results/scenario_matrix.json)); [DEMO.md](DEMO.md) is the presenter's runbook.
 
-| Act | Simulator mode | What happens | Verdict |
+| Act | Scenario | What happens | Verdict |
 |---|---|---|---|
-| 1. Healthy | `healthy` | Genuine device, authentic firmware v2.1.0, no CVEs, normal traffic | **Green** |
-| 2. Tampered firmware | `tampered` | Payload modified after signing; hash not in the registry | **Red** at the integrity step |
-| 3. Signed but vulnerable | `vulnerable` | Authentic v1.8.3 image carrying CVE-2022-0778, CVE-2021-28831 and CVE-2022-37434 | **Amber**, with the CVE list and an upgrade recommendation |
-| 4. Live compromise | `compromised` | Healthy device begins abnormal traffic | **Red** at the behaviour step; the session is isolated |
+| 1. Healthy | `healthy` | Genuine device, authentic firmware v2.1.0, no CVEs, normal traffic | **Green**; charging starts |
+| 2. Tampered firmware | `tampered` | Payload modified after signing; hash not in the registry | **Red** at the integrity step; authorisation refused |
+| 3. Signed but vulnerable | `vulnerable` | Authentic v1.8.3 image whose audit found OpenSSL 1.1.1k, zlib 1.2.11 and BusyBox 1.33.0: CVE-2022-2068, CVE-2022-37434, CVE-2022-0778, CVE-2021-28831, CVE-2023-0286 | **Amber**, with the CVE list and an upgrade recommendation |
+| 4. Live compromise | `compromised` | Healthy device charging, then scans the LAN | **Green → red mid-session**; `RemoteStopTransaction`, connection closed, charger quarantined |
+
+Six further scenarios pass the same way: cloned identity, rogue device, C2 beacon, DNS exfiltration, OCPP message flood, and C2 over an OCPP vendor extension mid-session.
 
 The dashboard's attack panel also composes attacks individually:
 
@@ -240,9 +244,22 @@ The two pipelines are independent. Llama never runs on the Hailo NPU, and the cl
 
 ## Performance and optimization
 
-### Measured
+### Measured: live gateway path
 
-All numbers below come from [`benchmarks/results/amd64-win32.json`](benchmarks/results/amd64-win32.json), produced by [`benchmarks/bench_hotpath.py`](benchmarks/bench_hotpath.py).
+Measured compute per check across the 10 scenarios in [`benchmarks/results/scenario_matrix.json`](benchmarks/results/scenario_matrix.json) (same development host as below, charger and gateway as separate processes on loopback):
+
+| Check | Range across scenarios | Includes |
+|---|---|---|
+| C1 identity | 5.4 – 35.3 ms | OCPP `DataTransfer` round trip to the charger, Ed25519 check, TPM quote verification |
+| C2 integrity | 0.01 – 21.8 ms | Registry lookup, vendor signature, PCR0 comparison |
+| C3 weaknesses | 3.3 – 20.4 ms | Audit-cache lookup by firmware hash |
+| C4 behaviour | 0.15 – 2.2 ms | Baseline over the OCPP transcript and tap flows |
+
+A verification therefore needs well under 100 ms of real work. The 5-second figure is the presentation schedule.
+
+### Measured: component micro-benchmarks
+
+All numbers below come from [`benchmarks/results/amd64-win32.json`](benchmarks/results/amd64-win32.json), produced by [`benchmarks/bench_hotpath.py`](benchmarks/bench_hotpath.py), which measures the original in-process verification path and the individual operations.
 
 **Measurement setup**
 
@@ -353,14 +370,21 @@ Generated files (`db/*.db`, `firmware/images/`, `firmware/keys/`, `evidence/repo
 ```bash
 python -m pytest tests
 ```
-20 tests cover:
+29 tests cover:
 
+- end to end: a real charger process over OCPP 1.6 against the live gateway for the healthy, tampered, vulnerable, clone and mid-session compromise scenarios, including signed-report verification ([`tests/test_live_gateway.py`](tests/test_live_gateway.py); stop the dashboard first, both use ports 9000 and 9100)
 - the attestation layer
 - the behaviour baseline against every simulator attack mode
 - the wolfSentry policy output
 - tool-output parsers and the per-firmware audit cache
 - wolfBoot digest checks
 - SARIF output and evidence-bundle tamper detection
+
+**Scenario rehearsal**
+
+```bash
+python -m simlab.run_headless          # all 10 scenarios, prints the verdict and enforcement for each
+```
 
 **Benchmark**
 
@@ -382,10 +406,14 @@ Lists each external tool, whether it was found, and how to build or install it. 
 |---|---|---|
 | GET | `/` | Dashboard |
 | GET | `/api/scenarios` | Preset attack scenarios |
-| POST | `/api/verify` | Start a verification with a preset `mode` or a granular attack configuration; returns `session_id` |
-| WS | `/ws/{session_id}` | Live stream of `check_start`, `check_done` and `verdict` events |
+| POST | `/api/verify` | Stage a scenario (preset `mode` or identity, firmware, behaviour and timing): launches the charger process and the tap; returns `session_id` |
+| WS | `/ws/{session_id}` | Live stream: `ocpp` frames, `check_start`/`check_done`, `verdict` (also mid-session), `session` (charging state, kW, kWh), `traffic`, `monitor`, `enforcement`, `advisory`, `report_ready` |
 | GET | `/api/report/{session_id}` | Signed evidence report (JSON) |
+| GET | `/api/report/{session_id}/verify` | Checks the report's Ed25519 signature and that its body is unmodified |
 | GET | `/api/session/{session_id}` | Session status |
+| GET | `/api/status` | Gateway endpoint, advisor engine, active session, quarantined chargers |
+
+The gateway itself listens for chargers on `ws://<node>:9000/ocpp/<charge-point-id>` (OCPP 1.6-J) and for flow records on `udp/9100`.
 
 ## Configuration
 
@@ -399,20 +427,28 @@ Lists each external tool, whether it was found, and how to build or install it. 
 | `CHARGEGUARD_KEYLIME_API` | `2.3` | Keylime REST API version |
 | `CHARGEGUARD_KEYLIME_CERT`, `_KEY`, `_CA` | unset | Mutual-TLS client certificate, key and CA for Keylime |
 | `CHARGEGUARD_TOOL_<NAME>` | unset | Explicit path to an external tool, for example `CHARGEGUARD_TOOL_SYFT=/opt/syft` |
+| `CHARGEGUARD_PORT` | `8000` | Dashboard port |
+| `CHARGEGUARD_NO_BROWSER` | unset | Do not open a browser on start (headless node) |
+| `CHARGEGUARD_LLAMA_PTE`, `_TOKENIZER`, `_RUNNER` | `models/llama3_2_1b.pte`, `models/tokenizer.model`, `models/llama_main` | Llama advisor model, tokenizer and ExecuTorch runner |
 
 ## Repository layout
 
 ```
-main.py            Entry point: setup, then the dashboard server
-config.py          Paths, the 5-second schedule, verdicts, simulator modes
-checks/            C1–C4 checks used by the verification app
+main.py            Entry point: provisioning, then gateway + dashboard
+config.py          Paths, the 5-second schedule, gateway ports, site addressing
+gateway/           Inline OCPP 1.6 gateway: live C1–C4 checks, monitoring, enforcement, flow collector
+charger/           C10 OCPP 1.6 charger agent (separate process; runs on the charger Pi)
+simlab/            Scenario staging, network tap simulator, headless scenario runner
+advisor/           Plain-language advisor: Llama on ExecuTorch, grounded rule-based fallback
+audit/             One-time firmware audit (component banners → curated real-CVE feed)
+checks/            Original in-process C1–C4 checks (used by the benchmark)
 orchestrator/      C5 orchestrator and trust engine
 policy/            C6 compliance map and mapper
-evidence/          C7 report generator and Ed25519 signer
+evidence/          C7 report generator, signer and report verification
 dashboard/         C8 FastAPI backend, WebSocket stream, web UI
-simulator/         C9 attack modes and C10 charger simulator
-firmware/          Demo firmware image and key generator
-db/                SQLite registry: firmware, CVEs, identities, runs
+simulator/         Original in-process simulator and attack modes (used by the benchmark)
+firmware/          Firmware image generator, provisioning and attestation enrolment
+db/                SQLite registry: firmware, CVEs, identities, attestation keys, golden PCR0, runs
 attestation/       C1 TPM 2.0 attestation: backends, verifiers, emulator launcher
 integrations/      C2–C4, C7, C9 adapters for the vendored security tools
 benchmarks/        Hot-path benchmark and committed results
@@ -444,7 +480,9 @@ Each layer has its own documentation: [`attestation/README.md`](attestation/READ
 
 **Done**
 
-- End-to-end verification app: five checks, trust engine, live dashboard, four demo acts plus composable attacks
+- Live system: OCPP 1.6 charger process, inline gateway, real C1–C4 checks on observed data, continuous monitoring, enforcement (remote stop, disconnect, quarantine), 10 scenarios passing end to end
+- Measured-boot attestation over OCPP `DataTransfer` and a one-time firmware audit against real CVEs
+- Advisor with labelled engines; signed report covering the full body, verifiable from the dashboard
 - Signed, compliance-mapped evidence report (17 controls, five standards)
 - TPM 2.0 attestation layer with software, tpm2-tss and Keylime paths, and an IBM TPM emulator launcher
 - Integration adapters for firmware integrity, firmware audit with a per-hash cache, behaviour baseline with block and isolate, SARIF + CycloneDX evidence bundles and a Renode attack lab
@@ -454,7 +492,8 @@ Each layer has its own documentation: [`attestation/README.md`](attestation/READ
 
 - Llama 3.2 1B Instruct advisor exported with ExecuTorch (XNNPACK) running on the Pi 5 CPU, grounded in the signed evidence
 - Learned traffic classifier (CICIDS2017 / UNSW-NB15 plus charger captures) beside the rule baseline; HailoRT on the AI HAT+ where fitted
-- Wire `attestation/` and `integrations/` into the four checks so the dashboard uses real TPM quotes, firmware audits and packet captures
+- Hardware path: tpm2-tss backend against a real TPM, packet capture on the node's bridge instead of the tap simulator, nftables rules applied
+- Phishing URL and scam-message detection module
 - Persistent SQLite connections on the hot path
 - Bundle the dashboard's JavaScript libraries for fully air-gapped operation
 - Run the benchmark on the Raspberry Pi 5, and profile with Arm Performance Studio
