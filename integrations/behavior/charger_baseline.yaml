@@ -14,6 +14,13 @@ peers:                      # expected destinations (hostnames, IPs or CIDRs)
     hosts: [10.0.0.1]
     ports: [123]
     protocols: [NTP]
+  - name: chargeguard-node       # inline gateway: OCPP endpoint, NTP and DNS for the charger
+    hosts: [10.20.0.1, 127.0.0.1, localhost]
+    ports: [9000, 123, 53]
+    protocols: [OCPP, NTP, DNS, TCP, UDP]
+
+# OCPP DataTransfer vendor extensions the charger may use
+allowed_vendor_ids: [org.chargeguard, ChargeCo]
 
 listening_ports: []          # the charger should not expose services
 
@@ -22,7 +29,7 @@ rates:                       # max messages per second, per protocol
   HEARTBEAT: 1
   STATUS: 2
   METER: 4
-  OCPP: 5
+  OCPP: 8
 
 require_encryption: [443]    # ports where plaintext is an anomaly
 
@@ -38,5 +45,5 @@ phases:
 
 enforcement:
   # unexpected peer / port -> block that peer; severe pattern -> isolate the charger
-  isolate_on: [c2-pattern, port-scan, exfiltration]
+  isolate_on: [c2-pattern, port-scan, exfiltration, unauthorized-extension]
   block_on: [unexpected-peer, unexpected-port, rate-exceeded, plaintext]

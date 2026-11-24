@@ -69,6 +69,7 @@ class Baseline:
     isolate_on: set[str]
     block_on: set[str]
     device: str = ""
+    allowed_vendor_ids: set[str] = field(default_factory=set)
 
     @classmethod
     def load(cls, path: str | Path = DEFAULT_BASELINE) -> "Baseline":
@@ -78,7 +79,8 @@ class Baseline:
                    rates={str(k): float(v) for k, v in d.get("rates", {}).items()},
                    require_encryption=set(d.get("require_encryption", [])),
                    phases=d.get("phases", []), isolate_on=set(enf.get("isolate_on", [])),
-                   block_on=set(enf.get("block_on", [])), device=d.get("device", ""))
+                   block_on=set(enf.get("block_on", [])), device=d.get("device", ""),
+                   allowed_vendor_ids=set(d.get("allowed_vendor_ids", [])))
 
     # ── matching helpers ──────────────────────────────────────────────────
 
@@ -104,12 +106,24 @@ class Baseline:
 
     # ── evaluation ────────────────────────────────────────────────────────
 
-    def evaluate(self, flows: Iterable[dict], listening: Iterable[int] = ()) -> BehaviorReport:
+    def phase_reached(self, messages: Iterable[str]) -> int:
+        """Highest protocol phase reached by an in-order message history."""
+        reached = -1
+        for m in messages:
+            idx = self.phase_index(m)
+            if idx is not None and idx <= reached + 1:
+                reached = max(reached, idx)
+        return reached
+
+    def evaluate(self, flows: Iterable[dict], listening: Iterable[int] = (),
+                 start_phase: int = -1) -> BehaviorReport:
+        """start_phase: phase already reached before this window (for sliding-window monitoring)."""
         flows = list(flows)
         anomalies: list[Anomaly] = []
         rate_by_proto: dict[str, float] = {}
         odd_ports_by_host: dict[str, set[int]] = {}
-        reached_phase = -1
+        dns_to_unknown: set[str] = set()           # real DNS queries (not TCP probes of port 53)
+        reached_phase = start_phase
 
         for f in flows:
             dst, port, proto = str(f.get("dst", "")), f.get("port"), str(f.get("proto", ""))
@@ -126,11 +140,17 @@ class Baseline:
                                              f"Protocol {proto} not expected for '{peer['name']}'", dst))
             if port is not None and (peer is None or port not in peer.get("ports", [])):
                 odd_ports_by_host.setdefault(dst, set()).add(int(port))
+            if port in _EXFIL_PORTS and peer is None and (proto or "").upper() in ("DNS", "UDP"):
+                dns_to_unknown.add(dst)
             if port in self.require_encryption and f.get("encrypted") is False:
                 anomalies.append(Anomaly("plaintext", f"Plaintext traffic on port {port}", dst, "high"))
             if proto:
                 rate_by_proto[proto] = rate_by_proto.get(proto, 0.0) + float(f.get("rate", 0) or 0)
-            if msg := f.get("message"):
+            if f.get("message") == "DataTransfer" and f.get("vendor_id") not in self.allowed_vendor_ids:
+                anomalies.append(Anomaly("unauthorized-extension",
+                                         f"DataTransfer to unapproved vendor extension '{f.get('vendor_id')}'",
+                                         dst, "critical", {"vendor_id": f.get("vendor_id")}))
+            elif msg := f.get("message"):
                 idx = self.phase_index(msg)
                 if idx is None:
                     anomalies.append(Anomaly("unknown-message", f"Message {msg} not in any protocol phase", dst))
@@ -155,8 +175,8 @@ class Baseline:
             if ports & _C2_PORTS:
                 anomalies.append(Anomaly("c2-pattern", f"Known C2 port {sorted(ports & _C2_PORTS)} to {host}",
                                          host, "critical"))
-            if ports & _EXFIL_PORTS and self.peer_for(host) is None:
-                anomalies.append(Anomaly("exfiltration", f"DNS to non-baseline resolver {host}", host, "critical"))
+        for host in sorted(dns_to_unknown):
+            anomalies.append(Anomaly("exfiltration", f"DNS to non-baseline resolver {host}", host, "critical"))
 
         return self._decide(anomalies, len(flows))
 
