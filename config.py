@@ -17,3 +17,16 @@ CHECK_TIMINGS = {
     "verdict":    (4.5, 5.0),
 }
 TOTAL_BUDGET = 5.0
+
+VERDICT_GREEN = "green"
+VERDICT_AMBER = "amber"
+VERDICT_RED   = "red"
+
+# Charger simulator modes
+MODE_HEALTHY      = "healthy"
+MODE_TAMPERED     = "tampered"
+MODE_VULNERABLE   = "vulnerable"
+MODE_COMPROMISED  = "compromised"
+
+DEVICE_ID = "CG-CHARGER-001"
+VENDOR    = "ChargeCo"
