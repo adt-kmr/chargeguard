@@ -1,0 +1,176 @@
+#! /usr/bin/env python3
+"""
+Firmware Analysis and Comparison Tool (FACT)
+Copyright (C) 2015-2026  Fraunhofer FKIE
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
+import logging
+import os
+import resource
+import sys
+from multiprocessing import Process
+
+from fact_base import FactBase
+from helperFunctions.process import complete_shutdown
+from intercom.back_end_binding import InterComBackEndBinding
+from scheduler.analysis import AnalysisScheduler
+from scheduler.comparison_scheduler import ComparisonScheduler
+from scheduler.unpacking_scheduler import UnpackingScheduler
+from storage.unpacking_locks import UnpackingLockManager
+
+ULIMIT_MIN = 1_024
+
+
+class FactBackend(FactBase):
+    PROGRAM_NAME = 'FACT Backend'
+    PROGRAM_DESCRIPTION = 'Firmware Analysis and Compare Tool (FACT) Backend'
+    COMPONENT = 'backend'
+
+    def __init__(self):
+        super().__init__()
+        self.unpacking_lock_manager = UnpackingLockManager()
+        _check_ulimit()
+
+        self.analysis_service = AnalysisScheduler(unpacking_locks=self.unpacking_lock_manager)
+        self.unpacking_service = UnpackingScheduler(
+            post_unpack=self.analysis_service.start_analysis_of_object,
+            analysis_workload=self.analysis_service.get_combined_analysis_workload,
+            unpacking_locks=self.unpacking_lock_manager,
+            status=self.analysis_service.status,
+        )
+        self.compare_service = ComparisonScheduler()
+        self.intercom = InterComBackEndBinding(
+            analysis_service=self.analysis_service,
+            compare_service=self.compare_service,
+            unpacking_service=self.unpacking_service,
+            unpacking_locks=self.unpacking_lock_manager,
+        )
+
+    def start(self) -> None:
+        self.analysis_service.start()
+        self.unpacking_service.start()
+        self.compare_service.start()
+        self.intercom.start()
+        if self.args.log_level == 'DEBUG':
+            self._print_pid_info()
+
+    def _print_pid_info(self) -> None:
+        logging.debug(f'backend main process: {os.getpid()}')
+        logging.debug(f'unpacking scheduler process: {_get_pids([self.unpacking_service.extraction_process])}')
+        logging.debug(f'unpacking monitoring process: {_get_pids([self.unpacking_service.work_load_process])}')
+        logging.debug(
+            f'unpacking container workers: {", ".join(str(c.container_pid) for c in self.unpacking_service.workers)}'
+        )
+        logging.debug(f'analysis scheduler processes: {_get_pids(self.analysis_service.schedule_processes)}')
+        logging.debug(f'analysis collector processes: {_get_pids(self.analysis_service.result_collector_processes)}')
+        logging.debug(f'analysis status process: {_get_pids([self.analysis_service.status._worker._worker_process])}')
+        for plugin, runner in self.analysis_service._plugin_runners.items():
+            logging.debug(f'plugin {plugin} runners: {_get_pids(runner._workers)}')
+        logging.debug(f'comparison scheduler process: {_get_pids([self.compare_service.worker])}')
+        for listener in self.intercom.listeners:
+            logging.debug(f'intercom {listener.__class__.__name__} process: {_get_pids([listener.process])}')
+
+    def shutdown(self) -> None:
+        super().shutdown()
+        self.intercom.shutdown()
+        self.compare_service.shutdown()
+        self.unpacking_service.shutdown()
+        self.analysis_service.shutdown()
+        self.unpacking_lock_manager.shutdown()
+        if not self.args.testing:
+            complete_shutdown()
+
+    def _update_component_workload(self) -> None:
+        self.work_load_stat.update(
+            unpacking_workload=self.unpacking_service.get_scheduled_workload(),
+            analysis_workload=self.analysis_service.get_scheduled_workload(),
+        )
+
+    def _exception_occurred(self) -> bool:
+        return any(
+            (
+                self.unpacking_service.check_exceptions(),
+                self.compare_service.check_exceptions(),
+                self.analysis_service.check_exceptions(),
+            )
+        )
+
+
+def _check_ulimit() -> None:
+    """
+    2024-07-16 - the numbers are prone to change over time
+
+    Each process has a hard limit and a soft limit for the maximum number of file descriptors (FDs) opened at the same
+    time. Since FACT makes extensive use of multiprocessing features, it uses up a lot of those FDs and if we run out,
+    this raises an OSError. To mitigate this, we try to increase the soft limit and print a warning if the hard limit
+    is low. With the default configuration, FACT uses 556 FDs (and potentially many more if you crank up the worker
+    counts).
+
+    The FD number is distributed among the individual backend components as follows:
+
+    | component              | init | start | sum |
+    | ---------------------- | ---- | ----- | --- |
+    | fact_base              | 7    | -     | 7   |
+    | unpacking_lock_manager | 2    | -     | 2   |
+    | analysis_service       | 200  | 294   | 494 |
+    | unpacking_service      | 2    | 20    | 22  |
+    | compare_service        | 3    | 4     | 7   |
+    | intercom               | -    | 24    | 24  |
+    | total                  |      |       | 556 |
+
+    Most of this stems from the analysis_service. The analysis service in turn looks like this:
+
+    | component                | init | start | sum |
+    | ------------------------ | ---- | ----- | --- |
+    | plugins                  | 196  | 268   |     |
+    | process queue            | 2    | -     |     |
+    | AnalysisStatus           | 2    | 2     |     |
+    | AnalysisTaskScheduler    | -    | -     |     |
+    | FSOrganizer              | -    | -     |     |
+    | BackendDbInterface       | -    | -     |     |
+    | scheduler processes (4x) | -    | 16    |     |
+    | collector processes (2x) | -    | 8     |     |
+    | total                    | 200  | 294   | 494 |
+
+    The 29 plugins are the main source of used FDs. Many FDs are used during initialization. The main reason for this
+    are input and output queues. Each queue contributes two FDs. In addition to that, there are the manager processes
+    for passing data between processes which also consume two FDs. Then there are some more multiprocessing objects
+    (Values, Arrays, etc.) that add some more. Even more are used when the worker processes are started.
+    """
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard_limit < ULIMIT_MIN:
+        logging.warning(
+            'The open file limit appears to be low. This could lead to "too many open files" errors. Please increase '
+            'the open file hard limit for the process that runs FACT.'
+        )
+    if soft_limit < hard_limit:
+        # we are only allowed to increase the soft limit and not the hard limit
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard_limit, hard_limit))
+
+
+def _get_pids(processes: list[Process | None]) -> str:
+    return ', '.join(str(p.pid) for p in processes if p is not None)
+
+
+if __name__ == '__main__':
+    backend = FactBackend()
+    try:
+        backend.main()
+        sys.exit(0)
+    except OSError as error:
+        logging.exception(f'Exception during start: {error}')
+        backend.shutdown()
+        sys.exit(1)

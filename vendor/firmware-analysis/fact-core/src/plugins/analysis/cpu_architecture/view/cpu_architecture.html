@@ -1,0 +1,14 @@
+{% extends "analysis_plugins/general_information.html" %}
+
+{% block analysis_result_details %}
+<tr>
+    <td class="table-head-light"><b>Architecture</b></td>
+    <td class="table-head-light"><b>Means of Detection</b></td>
+</tr>
+    {% for arch_entry in analysis_result.architectures %}
+        <tr>
+            <td>{{ arch_entry.value }}</td>
+            <td>{{ arch_entry.detection_method }}</td>
+        </tr>
+    {% endfor %}
+{% endblock %}

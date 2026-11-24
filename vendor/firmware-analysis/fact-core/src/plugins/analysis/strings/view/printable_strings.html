@@ -1,0 +1,81 @@
+{% extends "analysis_plugins/general_information.html" %}
+
+{% block analysis_result_details %}
+
+    <tr>
+        <td>Printable Strings</td>
+        <td class="p-0">
+            {# see the bootstrap-table docs: https://bootstrap-table.com/docs/api/table-options/ #}
+            <table data-search="true"
+                   data-pagination="true"
+                   data-regex-search="true"
+                   data-page-size="25"
+                   data-page-list="[25, 50, 100, 200]"
+                   data-show-columns="true"
+                   data-buttons-class="primary"
+                   data-show-toggle="true"
+                   data-show-fullscreen="true"
+                   data-escape="true"
+                   class="table table-bordered table-hover table-sm"
+                   id="stringsTable">
+                <thead>
+                <tr>
+                    {# docs: https://bootstrap-table.com/docs/api/column-options/ #}
+                    <th data-field="string"
+                        data-halign="center"
+                        data-sortable="true">
+                        String
+                    </th>
+                    <th data-field="offset"
+                        data-halign="center"
+                        data-align="right"
+                        data-searchable="false"
+                        data-cell-style="getCellStyle"
+                        data-sortable="true">
+                        Offset
+                    </th>
+                    <th data-field="offset"
+                        data-sortable="true"
+                        data-halign="center"
+                        data-align="right"
+                        data-searchable="false"
+                        data-cell-style="getCellStyle"
+                        data-formatter="formatHex">
+                        Offset (hex)
+                    </th>
+                    <th data-field="relevance"
+                        data-halign="center"
+                        data-align="right"
+                        data-searchable="false"
+                        data-cell-style="getCellStyle"
+                        data-formatter="formatFloat"
+                        data-sortable="true">
+                        Relevance
+                    </th>
+                </tr>
+                </thead>
+            </table>
+        </td>
+    </tr>
+
+    <script>
+        function formatHex(value) {
+            return `0x${Number(value).toString(16)}`;
+        }
+
+        function formatFloat(value) {
+            return parseFloat(value).toFixed(1);
+        }
+
+        function getCellStyle(value, row, index, field) {
+            return {css: {width: '150px', "font-family": "monospace"}};
+        }
+
+        $(function () {
+            // FixMe: load data via ajax
+            const data = {{ analysis_result['strings'] | tojson }};
+            $('#stringsTable').bootstrapTable({data: data})
+        });
+    </script>
+
+{% endblock %}

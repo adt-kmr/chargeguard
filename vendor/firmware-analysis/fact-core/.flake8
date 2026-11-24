@@ -1,0 +1,13 @@
+[flake8]
+# black does not format like E203 would expect
+extend-ignore = E501,W503,E203
+extend-select = E504
+exclude =
+    .git,
+    __pycache__,
+    src/bin,
+    src/install/compose-env
+    src/plugins/*/*/test/data/**
+per-file-ignores =
+    src/plugins/*: E402
+    src/install/install.py: E402

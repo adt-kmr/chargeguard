@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% set active_page = "Database" %}
+
+
+{% block head %}
+    <script type="text/javascript" src="{{ url_for('static', filename='js/advanced_search.js') }}"></script>
+{% endblock %}
+
+
+{% block body %}
+
+<div class="row justify-content-center" style="font-size: 0.9rem;">
+
+    <div class="col-xl-6 col-lg-8 col-md-10 mt-4">
+        <h3 class="mb-3">Advanced Search</h3>
+
+        <form class="form-horizontal" action="" method=post enctype=multipart/form-data>
+            <div class="form-group">
+                <textarea class="form-control" id="advanced_search" name="advanced_search" placeholder="Please enter your search query." style="width: 100%; height: 120px;" required></textarea>
+                <div class="btn-group" role="group" style="width: 100%;">
+                    <button type="button" class="btn btn-success btn-sm" id="check_input" style="width: 50%;" onClick="validateQuery();">
+                        <span><i class="fas fa-check"></i></span> Check Query
+                    </button>
+                    <button type="button" class="btn btn-primary btn-sm" id="input_submit" style="width: 50%;" onClick="submitSearch(this.form);">
+                        <span><i class="fas fa-search"></i></span> Search
+                    </button>
+                </div>
+                <div class="invalid-feedback mb-2" id="advanced_search_feedback"></div>
+            </div>
+            <div class="form-group form-check">
+                <input type="checkbox" class="form-check-input" name="only_firmwares" id="only_firmware" value="True" onchange="hide_checkbox()">
+                <label class="form-check-label">show parent firmware instead of matching file</label>
+            </div>
+            <div class="form-group form-check pl-0" id="inverted_div" style="display: none;">
+                <input type="checkbox" name="inverted" id="inverted" value="True">
+                <label class="form-check-label">inverse (firmware without matching files)</label>
+            </div>
+            {% if error %}
+                <p class="mt-3" style="color:red">Please enter a valid search request. {{ error }}</p>
+            {% endif %}
+        </form>
+
+
+            <hr>
+
+            <h4>Example queries:</h4>
+
+            <p class="mt-4">
+                Simple:<br />
+                <span class="example-json">{"device_class": "Router", "vendor": "AVM"}</span><br />
+                <span class="example-comment">Select firmware files based on specific vendor and device class</span>
+            </p>
+            <p>
+                Search for different values (not equal): <kbd>"$ne"</kbd><br />
+                <span class="example-json">{"device_class": {"$ne": "Router"}}</span><br />
+                <span class="example-comment">Search firmware from devices that aren't routers</span>
+            </p>
+            <p>
+                With regular expression: <kbd>"$regex"</kbd><br />
+                <span class="example-json">{"device_name": {"$regex": "Fritz.+Box 7[0-9]{3}"}}</span><br />
+                <span class="example-comment">Match field with regular expression</span>
+            </p>
+            <p>
+                With substring (case-insensitive): <kbd>"$like"</kbd><br />
+                <span class="example-json">{"vendor": {"$like": "link"}}</span><br />
+                <span class="example-comment">Match firmwares files that have "link" in their vendor name</span>
+            </p>
+            <p>
+                With arithmetic: <kbd>"$lt"</kbd> / <kbd>"$gt"</kbd><br />
+                <span class="example-json">{"processed_analysis.file_type.mime": "application/x-executable", "size": {"$lt": 1337}}</span><br />
+                <span class="example-comment">Select only executables that are smaller than 1337 bytes</span>
+            </p>
+            <p>
+                With list of possible values: <kbd>"$in"</kbd><br />
+                <span class="example-json">{"device_class": {"$in": ["router", "switch"]}}</span><br />
+                <span class="example-comment">Select firmwares that have either device class "router" or "switch"</span>
+            </p>
+            <p>
+                Check existence (JSON columns only): <kbd>"$exists"</kbd><br />
+                <span class="example-json">{"processed_analysis.software_components.BusyBox": {"$exists": true}}</span><br />
+                <span class="example-comment">Select files where an entry for BusyBox exists in the result of the software components plugin</span>
+            </p>
+            <p>
+                Check if array contains value (JSON columns only): <kbd>"$contains"</kbd><br />
+                <span class="example-json">{"processed_analysis.software_components.OpenSSL.meta.version": {"$contains": ["1.0.1f"]}}</span><br />
+                <span class="example-comment">Select files where OpenSSL version 1.0.1f was found</span>
+            </p>
+
+            For further usage also see <a href="https://docs.mongodb.com/v3.6/tutorial/query-documents/">the MongoDB documentation</a> or simply ask for help at our <a href="https://gitter.im/FACT_core/community">Gitter channel</a>.
+
+            <hr>
+
+            <h4>Structure of file objects in database:</h4>
+            <pre class="mt-4">Common fields
+- _id                   # UID of file
+- analysis_tags         # Dynamically generated tags such as "Linux 2.7"
+- depth                 # Level of extraction: Outer container has 0, SquashFS inside
+                        # container has 1, ..
+- file_name             # Name of file, can for example be busybox if extracted by a high
+                        # level tool, can also be smth. like 49913.bin if carved
+- file_path             # Path on backend file system
+- files_included        # UIDs of included files (next level of extraction downwards)
+- parent_firmware_uids  # UIDs for outer firmware container files containing this file
+- parents               # UIDs of files containing this file (next level of extraction
+                        # upwards)
+- processed_analysis    # Dictionary containing all analysis results. See below for
+                        # structure
+- sha256                # SHA-2 hash of file
+- size                  # file size in bytes
+- virtual_file_path     # Full path of file in outer container with human readable format
+                        # (e.g. |&lt;Vendor&gt; 32-Route-2000 v.1.1|rootfs.bin|/bin/bash)
+
+Additional fields for outer container: (Mostly set by user, so depend on submission policy)
+- device_class          # e.g. Router
+- device_name           # e.g. Speedport W724
+- device_part           # e.g. Kernel
+- md5                   # MD5 hash of file
+- release_date          # Release date in seconds since epoch (1970-01-01)
+- submission_date       # Submission date in seconds since epoch (1970-01-01)
+- tags                  # User defined tags, e.g. Partial, Crawled
+- vendor                # e.g. EvilCorp
+- version               # e.g 1.0.0.312</pre>
+    </div>
+</div>
+
+{% endblock %}

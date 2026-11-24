@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% set active_page = "Database" %}
+
+{% block head %}
+    {# jstree import #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='node_modules/jstree/dist/themes/default/style.min.css') }}" />
+    <script type="text/javascript" src="{{ url_for('static', filename='node_modules/jstree/dist/jstree.min.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='node_modules/jstree-bootstrap-theme/dist/themes/proton/style.min.css') }}" />
+
+    {# highlight.js import #}
+    <script src="{{ url_for('static', filename='node_modules/@highlightjs/cdn-assets/highlight.min.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='node_modules/@highlightjs/cdn-assets/styles/github.min.css') }}" />
+
+    <script src="{{ url_for('static', filename='node_modules/highlightjs-line-numbers.js/dist/highlightjs-line-numbers.min.js') }}"></script>
+
+    <script>
+        const uid = "{{ uid | safe }}";
+        const selected_analysis = "{{ selected_analysis }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/file_tree.js') }}"></script>
+    <script type="text/javascript" src="{{ url_for('static', filename='js/show_analysis_single_update.js') }}"></script>
+    <script>
+        window.addEventListener('load', function() {
+            // add highlighting animation if analysis was updated
+            if (localStorage.getItem('analysisUpdated') === `${selected_analysis}-${uid}`) {
+                document.getElementById('show-analysis-table').classList.add('updated-analysis');
+                localStorage.setItem('analysisUpdated', 'false');
+            }
+        });
+    </script>
+    <script type="text/javascript" src="{{ url_for('static', filename='js/loading.js') }}"></script>
+
+    <style>
+        {# styling for file preview line lumbers #}
+        .hljs-ln-numbers {
+            user-select: none;
+            text-align: center;
+            color: gray;
+            border-right: 1px solid gray;
+            vertical-align: top;
+            padding-right: 5px !important;
+        }
+        .hljs-ln-code {
+            padding-left: 10px !important;
+        }
+        @keyframes updated-analysis {
+            from { box-shadow: 0 0 10px 5px rgba(0, 105, 217, 0.5); }
+            to { box-shadow: none; }
+        }
+        .updated-analysis {
+            animation: updated-analysis 2s ease-in-out;
+        }
+    </style>
+{% endblock %}
+
+
+{% block body %}
+
+<div class="row justify-content-between mt-4">
+    <div class="col-lg-6">
+
+        {# Button section #}
+        {% include "show_analysis/button_groups.j2" %}
+
+
+        {# Header section #}
+        <div class="header mb-4" style="word-wrap: break-word">
+            <h3>
+                {{ firmware.uid | replace_uid_with_hid(root_uid=root_uid) | safe }}
+                {% if link_target %}
+                    ({{ link_target | safe }})
+                {% endif %}
+                <br />
+                {% if firmware.analysis_tags or firmware.tags %}
+                    {{ firmware.analysis_tags | render_analysis_tags(uid, root_uid) | safe }}{{ firmware.tags | render_fw_tags | safe }}<br />
+                {% endif %}
+                <span style="font-size: 15px"><strong>UID:</strong> {{ uid | safe }}</span>
+            </h3>
+            {% if all_analyzed_flag %}
+                <div class="alert alert-warning">
+                    <strong>Warning!</strong> Not all included files are fully analyzed yet! Only analyzed files are shown.
+                </div>
+            {% endif %}
+        </div>
+
+    </div>
+
+    <div class="col-lg-6">
+        {# General info section #}
+        {% include "show_analysis/general_info_table.j2" %}
+    </div>
+
+</div>
+
+
+{# Comparison section #}
+{% include "show_analysis/comparison.j2" %}
+
+    {# File tree section #}
+    {% include "show_analysis/file_tree.j2" %}
+
+    <div class="row">
+        {# Select analysis section #}
+        {% include "show_analysis/select_analysis.j2" %}
+
+        {# Showing analysis section #}
+        {% block complete_analysis_block %}
+
+            <div class="col-lg-10">
+                {% block analysis_result %}
+                {% endblock %}
+
+                {# summary of included files #}
+                {%- if selected_analysis and firmware.files_included -%}
+                    <table class="table table-bordered pb-0 mb-0">
+                        <thead class="thead-light">
+                            <tr>
+                                <th>
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        Summary for Included Files
+                                        <div class="custom-control custom-switch">
+                                            <input type="checkbox" class="custom-control-input" id="summaryOrderSwitch" onchange="create_summary_view();">
+                                            <label class="custom-control-label" for="summaryOrderSwitch" style="font-weight: normal;">Show inverted summary</label>
+                                        </div>
+                                    </div>
+                                </th>
+                            </tr>
+                        </thead>
+                    </table>
+
+                    <button id="summary-button" class="btn list-group-item list-group-item-primary p-2 w-100 mb-3"
+                            onclick="create_summary_view();">
+                        Load Summary for Included Files
+                    </button>
+
+                    <div class="mb-0 border" id="loading-summary-gif" style="display: none; padding: 5px; text-align: center">
+                            <p>Loading summary for included files...</p>
+                    </div>
+                    <div id="summary-div"></div>
+                    <script>
+                        loadLoadingAnimation('loading-summary-gif');
+                    </script>
+                    <script type="text/javascript" src="{{ url_for('static', filename='js/show_analysis_summary.js') }}"></script>
+
+                {%- endif -%}
+            </div>
+
+        {% endblock %}
+
+        {# preview section #}
+        {% include "show_analysis/preview.j2" %}
+    </div>
+
+    {# comment section #}
+    {% include "show_analysis/comments.j2" %}
+
+    <script>
+        function radare_view() {
+            let radare_form = document.createElement('form');
+            radare_form.action = '/radare-view/{{ firmware.uid }}';
+            radare_form.target = '_blank';
+            radare_form.method = 'GET';
+
+            document.body.append(radare_form);
+            radare_form.submit();
+        }
+        function create_summary_view(focus=false){
+            load_summary(uid, selected_analysis, document.getElementById('summaryOrderSwitch').checked);
+            if (focus === true) {
+                location.href = "#summary-heading";
+            }
+        }
+        document.addEventListener("DOMContentLoaded", function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const summary = urlParams.get('load_summary');
+            const preview = urlParams.get('load_preview') || false;
+            const has_children = {{ "true" if firmware.files_included | length > 0  else "false" }};
+            if (summary === "true" && has_children && selected_analysis !== "None") {
+                // automatically load summary if URL parameter "load_summary=true" is set
+                create_summary_view(focus=true);
+            } else if (preview !== false) {
+                // automatically load preview at address xyz if URL parameter "load_preview=xyz" is set
+                loadPreview(preview, true);
+            }
+        });
+    </script>
+
+{% endblock %}

@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import logging
+from copy import copy
+from time import time
+from typing import TYPE_CHECKING
+
+from helperFunctions.merge_generators import shuffled
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from analysis.plugin import AnalysisPluginV0
+    from objects.file import FileObject
+    from objects.firmware import Firmware
+
+MANDATORY_PLUGINS = ['file_type', 'file_hashes']
+
+
+class AnalysisTaskScheduler:
+    def __init__(self, plugins: dict[str, AnalysisPluginV0]):
+        self.plugins: dict[str, AnalysisPluginV0] = plugins
+
+    def schedule_analysis_tasks(self, fo: FileObject, scheduled_analysis: list[str], mandatory: bool = False) -> None:
+        scheduled_analysis = self._add_dependencies_recursively(copy(scheduled_analysis) or [])
+        fo.scheduled_analysis = self._smart_shuffle(
+            scheduled_analysis + MANDATORY_PLUGINS if mandatory else scheduled_analysis
+        )
+
+    def _smart_shuffle(self, plugin_list: list[str]) -> list[str]:
+        scheduled_plugins = []
+        remaining_plugins = set(plugin_list)
+
+        while remaining_plugins:
+            next_plugins = self._get_plugins_with_met_dependencies(remaining_plugins, scheduled_plugins)
+            if not next_plugins:
+                logging.error(
+                    f'Error: Could not schedule plugins because dependencies cannot be fulfilled: {remaining_plugins}'
+                )
+                break
+            scheduled_plugins[:0] = shuffled(next_plugins)
+            remaining_plugins.difference_update(next_plugins)
+
+        # assure file type is first for blacklist functionality
+        if 'file_type' in scheduled_plugins and scheduled_plugins[-1] != 'file_type':
+            scheduled_plugins.remove('file_type')
+            scheduled_plugins.append('file_type')
+        return scheduled_plugins
+
+    def _get_plugins_with_met_dependencies(
+        self, remaining_plugins: set[str], scheduled_plugins: list[str]
+    ) -> list[str]:
+        met_dependencies = scheduled_plugins
+        return [
+            plugin
+            for plugin in remaining_plugins
+            if all(dependency in met_dependencies for dependency in self.plugins[plugin].metadata.dependencies)
+        ]
+
+    def _add_dependencies_recursively(self, scheduled_analyses: list[str]) -> list[str]:
+        scheduled_analyses_set = set(scheduled_analyses)
+        while True:
+            new_dependencies = self.get_cumulative_remaining_dependencies(scheduled_analyses_set)
+            if not new_dependencies:
+                break
+            scheduled_analyses_set.update(new_dependencies)
+        return list(scheduled_analyses_set)
+
+    def get_cumulative_remaining_dependencies(self, scheduled_analyses: Iterable[str]) -> set[str]:
+        return {
+            dependency for plugin in scheduled_analyses for dependency in self.plugins[plugin].metadata.dependencies
+        }.difference(scheduled_analyses)
+
+    def reschedule_failed_analysis_task(self, fw_object: Firmware | FileObject) -> None:
+        failed_plugin, cause = fw_object.analysis_exception
+        fw_object.processed_analysis[failed_plugin] = self._get_failed_analysis_result(cause, failed_plugin)
+        for plugin in fw_object.scheduled_analysis[:]:
+            if failed_plugin in self.plugins[plugin].metadata.dependencies:
+                fw_object.scheduled_analysis.remove(plugin)
+                logging.warning(
+                    f'Unscheduled analysis {plugin} for {fw_object.uid} because dependency {failed_plugin} failed'
+                )
+                fw_object.processed_analysis[plugin] = self._get_failed_analysis_result(
+                    f'Analysis of dependency {failed_plugin} failed', plugin
+                )
+        fw_object.analysis_exception = None
+
+    def _get_failed_analysis_result(self, cause: str, plugin: str) -> dict:
+        return {
+            'result': {'failed': cause},
+            'plugin_version': self.plugins[plugin].metadata.version,
+            'analysis_date': time(),
+        }
+
+    def prune_unneeded_results(self, fo: FileObject) -> None:
+        """
+        Important thing to note: We only care about direct dependencies here, because recursive ones are not needed
+        to run an analysis.
+        """
+        still_needed_deps = {
+            dep for plugin in (fo.scheduled_analysis or []) for dep in self.plugins[plugin].metadata.dependencies
+        }
+        for result_to_remove in set(fo.processed_analysis) - still_needed_deps:
+            fo.processed_analysis.pop(result_to_remove, None)

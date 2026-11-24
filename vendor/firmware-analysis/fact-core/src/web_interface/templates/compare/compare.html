@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% set active_page = "Database" %}
+
+
+
+{% block head %}
+    {# jstree import #}
+    <script src="{{ url_for('static', filename='node_modules/jstree/dist/jstree.min.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='node_modules/jstree/dist/themes/default/style.min.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='node_modules/jstree-bootstrap-theme/dist/themes/proton/style.min.css') }}" />
+{% endblock %}
+
+
+{% block body %}
+
+<table class="table table-bordered mt-4">
+    <thead>
+        <tr>
+            <th>Firmware</th>
+            {% for uid in uid_list %}
+                <th>{{ result['general']['hid'][uid] }}</th>
+            {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+
+        {# --- general information --- #}
+        <tr>
+            <th colspan="{{ uid_list | length + 1 }}" class="table-head-light" style="text-align:center;">General information</th>
+        </tr>
+        {% for feature, value_dict in result['general'].items() | sort %}
+            {% if feature != 'hid' %}
+                <tr>
+                    <td style="width: 150px"> {{ feature | replace_underscore }} </td>
+                    {% if value_dict | all_items_equal %}
+                        <td colspan="{{ uid_list | length }}" class="text-center text-success">
+                            {{ value_dict[uid_list[0]] | nice_generic | safe }}
+                        </td>
+                    {% else %}
+                        {% for uid in uid_list %}
+                            <td>
+                                {{ value_dict[uid] | nice_generic | safe }}
+                            </td>
+                        {% endfor %}
+                    {% endif %}
+                </tr>
+            {% endif %}
+        {% endfor %}
+
+        {# --- plugin results --- #}
+        
+        {% for plugin in result['plugins'] | sort %}
+        <tr>
+            <th colspan="{{ uid_list | length  + 1 }}" class="table-head-light" style="text-align:center;">{{ plugin | replace_underscore }}</th>
+        </tr>
+            {% if plugin in plugins_without_view %}
+
+                {# plugins without separate view #}
+                {% for feature, feature_results in result['plugins'][plugin].items() | sort %}
+                    <tr>
+                        <td>{{ feature | replace_underscore }}</td>
+
+                        {# --- all case --- #}
+                        {% if 'all' in feature_results %}
+                            {% set skipped = (feature_results['all'] is string) and feature_results['all'].startswith("Required analyses not present") %}
+                            {% if not skipped %}
+                                {% if feature_results['collapse'] %}
+                                    <td colspan="{{ uid_list | length }}">
+                                        {{ feature_results['all'] | list_group_collapse('success') | uids_to_link | replace_uid_with_file_name | safe  }}
+                                    </td>
+                                {% else %}
+                                    {{ feature_results['all'] | list_group | uids_to_link | replace_uid_with_file_name | safe  }}
+                                {% endif %}
+                            {% endif %}
+
+                        {# --- individual results --- #}
+                        {% else %}
+                            {% for uid in uid_list %}
+                                <td>
+                                {% if feature_results['collapse'] %}
+                                    {{ feature_results[uid] | list_group_collapse('warning') | uids_to_link(root_uid=uid) | replace_uid_with_file_name | safe }}
+                                {% else %}
+                                    {{ feature_results[uid] | list_group | uids_to_link(root_uid=uid) | replace_uid_with_file_name | safe }}
+                                {% endif %}
+                                </td>
+                            {% endfor %}
+                        {% endif %}
+                    </tr>
+                {% endfor %}
+
+
+            {# individual plugin views #}
+
+            {% endif %}
+        {% endfor %}
+        
+    </tbody>
+</table>
+
+
+{% endblock %}

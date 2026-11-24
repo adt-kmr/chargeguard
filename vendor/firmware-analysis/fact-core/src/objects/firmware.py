@@ -1,0 +1,175 @@
+import sys
+from dataclasses import dataclass, field
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    # FixMe: remove when 3.10 is EoL
+    from typing_extensions import Self
+
+from helperFunctions.tag import TagColor
+from objects.file import FileObject
+
+
+@dataclass(kw_only=True)
+class Firmware(FileObject):
+    """
+    Uploaded firmware image representation.
+
+    In FACT, we represent an uploaded firmware image as specialized :class:`~objects.file.FileObject` with supplementary meta data.
+    This class is the root of a virtual path tree with all extracted folders and files as branch- and leaf-instances of the :class:`~objects.file.FileObject` class::
+
+                                  ┌────────────┐
+                                  │  Firmware  │
+                                  │(Root Image)│
+                                  └──────┬─────┘
+                                         │
+                         ┌───────────────┼───────────────┐
+                         │               │               │
+                         ▼               ▼               ▼
+                  ┌────────────┐  ┌────────────┐  ┌────────────┐
+                  │    /etc    │  │    /var    │  │    ...     │
+                  │(FileObject)│  │(FileObject)│  │(FileObject)│
+                  └──────┬─────┘  └──────┬─────┘  └────────────┘
+                         │               │
+               ┌─────────┴────┐       ┌──┼──┐
+               │              │       │  │  │
+               ▼              ▼       ▼  ▼  ▼
+        ┌────────────┐ ┌────────────┐   ...
+        │   passwd   │ │    ...     │
+        │(FileObject)│ │(FileObject)│
+        └────────────┘ └────────────┘
+
+
+    For each uploaded firmware, FACT can hold meta data that associates the analyzed image with its corresponding embedded device.
+    This meta data includes the...
+
+    * :attr:`device_class`,
+    * device :attr:`vendor`,
+    * :attr:`device_name`,
+    * firmware :attr:`version`,
+    * firmware :attr:`release_date`, and
+    * image-contained :attr:`part`.
+
+    Additionally, each Firmware can hold user-defined tags that may be used in advanced queries to categorize and filter all firmwares present in the database.
+    It is important to understand that said tags are **separately stored** from the :attr:`objects.file.FileObject.analysis_tags`, which are propagated by analysis plugins.
+    """  # noqa: E501
+
+    #: Device name string identifier.
+    #: Can be freely defined during upload.
+    #:
+    #: This attribute is **mandatory** and shall never be `None`.
+    device_name: str | None = None
+
+    #: Firmware version string identifier.
+    #: Can be freely defined during upload.
+    #:
+    #: This attribute is **mandatory** and shall never be `None`.
+    version: str | None = None
+
+    #: Device class string identifier.
+    #: Not all embedded appliances are the same: There are routers, IP cameras, entertainment systems, printers, and a plethora of other classes.  # noqa: E501
+    #: FACT requires a user to categorize analyzed firmware images by this attribute.
+    #: While this attribute is **mandatory**, it can be freely defined during upload.
+    device_class: str | None = None
+
+    #: Device vendor string identifier.
+    #:
+    #: This attribute is **mandatory** and shall never be `None`.
+    vendor: str | None = None
+
+    #: Specifies the parts of an embedded system that are contained in this firmware.
+    #: While this meta data string can be freely defined during firmware upload,
+    #: FACT provides a preset of frequently used values: `complete`, `kernel`, `bootloader`, and `root-fs`.
+    #:
+    #: This attribute is **optional**. The firmware image is assumed to be `complete` if the assigned/default value is an empty string.  # noqa: E501
+    part: str = ''
+
+    #: Release date string of this firmware version in `ISO 8601 <https://en.wikipedia.org/wiki/ISO_8601>`_ `YYYY-MM-DD` format.  # noqa: E501
+    #:
+    #: This attribute is **optional**. The release date is assumed to be the start of UNIX epoch time (`1970-01-01`) if not specificed.  # noqa: E501
+    release_date: str | None = None
+
+    #: User-defined firmware tags for advanced grouping and filtering of firmware images, saved as {'tag': :class:`helperFunctions.tag.TagColor`} dictionary.  # noqa: E501
+    #: It is important to understand that these tags are **separately stored** from the :attr:`objects.file.FileObject.analysis_tags`, which are propagated by analysis plugins.  # noqa: E501
+    #:
+    #: This attribute is **optional**, the dict may be empty.
+    tags: dict[str, TagColor] = field(default_factory=dict)
+
+    _root_uid: str | None = field(init=False, default=None)
+
+    @property
+    def root_uid(self) -> str:
+        root_uid = self._root_uid
+        if root_uid is None:
+            root_uid = self._root_uid = self.uid
+        return root_uid
+
+    @root_uid.setter
+    def root_uid(self, uid: str) -> None:
+        self._root_uid = uid
+
+    def set_part_name(self, part: str) -> None:
+        """
+        Setter for `self.part_name`.
+
+        :param part: part identifier, defaults to `complete` if empty string is passed.
+        :type part: str
+        """
+        if part == 'complete':
+            self.part = ''
+        else:
+            self.part = part
+
+    def set_tag(self, tag: str) -> None:
+        """
+        Set a user-defined tag in the color gray.
+
+        :param tag: Tag identifier
+        :type tag: str
+        """
+        self.tags[tag] = TagColor.GRAY
+
+    def get_hid(self) -> str:
+        """
+        See :meth:`objects.file.FileObject.get_hid`.
+        """
+        part = f' - {self.part}' if self.part else ''
+        return f'{self.vendor} {self.device_name}{part} v. {self.version}'
+
+    def __str__(self) -> str:
+        return (
+            f'{self.get_hid()}\n'
+            f'Processed Analysis: {list(self.processed_analysis.keys())}\n'
+            f'Scheduled Analysis: {self.scheduled_analysis}'
+        )
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def to_json(self, vfp_parent_filter: set[str] | None = None) -> dict:
+        json = super().to_json(vfp_parent_filter)
+        json.update(
+            {
+                'device_class': self.device_class,
+                'device_name': self.device_name,
+                'part': self.part,
+                'release_date': self.release_date,
+                'tags': self.tags,
+                'vendor': self.vendor,
+                'version': self.version,
+            }
+        )
+        return json
+
+    @classmethod
+    def from_json(cls, json_dict: dict, root_uid: str | None = None) -> Self:
+        fw = super().from_json(json_dict, root_uid)
+        fw.device_class = json_dict.get('device_class')
+        fw.device_name = json_dict.get('device_name')
+        fw.part = json_dict.get('part', '')
+        fw.release_date = json_dict.get('release_date')
+        fw.tags = json_dict.get('tags', {})
+        fw.vendor = json_dict.get('vendor')
+        fw.version = json_dict.get('version')
+        return fw

@@ -1,0 +1,699 @@
+{% extends "base.html" %}
+
+{% set active_page = "Info" %}
+
+{% block body %}
+
+<div class="row justify-content-center mt-4">
+
+    <div class="col-xl-4 col-lg-6 col-md-12">
+        <h3 class="mb-3">Software</h3>
+        <p class="mb-3">
+            The <a href="https://fkie-cad.github.io/FACT_core/">Firmware Analysis and Comparison Tool (FACT)</a> (formerly known as Fraunhofer's Firmware Analysis Framework (FAF)) is intended to automate Firmware Security Analysis.
+            FACT is developed by <a href="http://www.fkie.fraunhofer.de">Fraunhofer FKIE</a>.
+            The project is partly financed by <a href="https://www.bsi.bund.de">German Federal Office for Information Security (BSI)</a> and others.
+        </p>
+        {% include "imprint.html" %}
+    </div>
+    <div class="col-xl-4 col-lg-6 col-md-12">
+        <div class="card bg-light">
+            <div class="card-body">
+                <h3 class="card-title">License Information</h3>
+                <h6 class="card-subtitle mb-2 text-muted">
+                    Firmware Analysis and Comparison Tool (FACT)<br />
+                    Copyright (C) 2015-2026  Fraunhofer FKIE
+                </h6>
+                <p class="card-text">
+                    This program is free software: you can redistribute it and/or modify
+                    it under the terms of the GNU General Public License as published by
+                    the Free Software Foundation, either version 3 of the License, or
+                    (at your option) any later version.<br />
+
+                    This program is distributed in the hope that it will be useful,
+                    but WITHOUT ANY WARRANTY; without even the implied warranty of
+                    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+                    GNU General Public License for more details.
+
+                    You should have received a copy of the GNU General Public License
+                    along with this program.  If not, see <a href="http://www.gnu.org/licenses/">www.gnu.org/licenses/</a>.
+                    <br />
+                    <br />
+                    Some plug-ins may have different licenses.
+                </p>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-xl-8 col-lg-12">
+        <h3 class="my-4">Change Log</h3>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-xl-8 col-lg-12" style="width:100%;column-count:2;column-rule:grey 1px dotted;column-gap:50px">
+
+        <h4>FACT 4.5-dev</h4>
+        <ul>
+            <li>ToDo</li>
+        </ul>
+
+        <h4>FACT 4.4 (2026-06-23)</h4>
+        <ul>
+            <li>Features:
+                <ul>
+                    <li>Added support for Ubuntu 26.04 and Python 3.14</li>
+                    <li>Added support for aggregate queries in GraphQL</li>
+                    <li>Added more generalized support for distributions based on debian and ubuntu (instead of just supporting Linux Mint)</li>
+                    <li>Improved stability of Redis connection</li>
+                    <li>Added option to configure analysis plugin timeouts through the configuration file</li>
+                </ul>
+            </li>
+            <li>Bug Fixes:
+                <ul>
+                    <li>The "changed text files" comparison feature should correctly consider text files with MIME types other than text/plain now </li>
+                    <li>Fixed a bug in the CPU architechture plugin resulting in failed analyses</li>
+                    <li>Empty blacklists in the plugin config should now correctly result in no files being skipped based on their type</li>
+                    <li>Fixed a bug in the setup of the CVE lookup plugin (caused by SSVC data being added)</li>
+                    <li>Fixed installation errors caued by the deprecation of the pkg_resources package</li>
+                    <li>Fixed a bytes rendering bug in the web frontend</li>
+                    <li>Fixed a filter bug in the comparison results template</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>FACT 4.3 (2026-01-12)</h4>
+        <ul>
+            <li>Features:
+                <ul>
+                    <li>Web GUI:
+                        <ul>
+                            <li>Analysis page:
+                                <ul>
+                                    <li>Added option to view the raw JSON analysis result</li>
+                                    <li>Permissions are shown in the file tree (where available)</li>
+                                    <li>Improved comment feature</li>
+                                    <li>Single file analyses will be shown directly when completed</li>
+                                    <li>Show a link to the actual file (if available) for symlinks</li>
+                                    <li>Added option to hide symlinks in the file tree</li>
+                                    <li>Added forward/back buttons to hex preview</li>
+                                </ul>
+                            </li>
+                            <li>Comparison:
+                                <ul>
+                                    <li>Changed text files are shown as tree</li>
+                                    <li>Improved browsing page</li>
+                                </ul>
+                            </li>
+                            <li>Binary search: show matching strings</li>
+                            <li>Advanced search: improved support for <code>$contains</code> operator</li>
+                            <li>GraphQL search: search the database using GraphQL</li>
+                            <li>Improved upload page</li>
+                            <li>Added dark mode</li>
+                            <li>Added option to cancel analyses</li>
+                            <li>Improved system and plugin status page</li>
+                            <li>New loading animation</li>
+                        </ul>
+                    </li>
+                    <li>Plugins:
+                        <ul>
+                            <li>known vulnerabilities:
+                                <ul>
+                                    <li>Added check for vulnerable xz version</li>
+                                </ul>
+                            </li>
+                            <li>filesystem metadata:
+                                <ul>
+                                    <li>added support for YAFFS filesystems</li>
+                                    <li>Show permissions (where possible)</li>
+                                </ul>
+                            </li>
+                            <li>software components:
+                                <ul>
+                                    <li>Improved signatures of OpenSSH, dropbear and lighttpd</li>
+                                </ul>
+                            </li>
+                            <li>CVE lookup:
+                                <ul>
+                                    <li>Added support for CVSS 4.0+ metrics</li>
+                                </ul>
+                            </li>
+                            <li>IP and URI finder:
+                                <ul>
+                                    <li>Merged with "interesting URIs" plugin</li>
+                                    <li>Improved template</li>
+                                </ul>
+                            </li>
+                            <li>printable strings:
+                                <ul>
+                                    <li>merged with string evaluator plugin</li>
+                                    <li>improved result visualization</li>
+                                </ul>
+                            </li>
+                            <li>users and passwords:
+                                <ul>
+                                    <li>improved password cracking wordlist</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>Other:
+                        <ul>
+                            <li>Firmware import/export: analyses (extracted files and results) can now be exported and imported using the script <code>firmware_import_export.py</code></li>
+                            <li>Added delete endpoint to REST API</li>
+                            <li>Extractor docker image can now be set in the configuration</li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>Performance/Efficiency Improvements:
+                <ul>
+                    <li>Improved docker container mount efficiency of multiple analysis plugins</li>
+                    <li>Improved code highlighting speed on analysis page</li>
+                    <li>Optimized RAM usage of cve lookup plugin setup</li>
+                    <li>Greatly improved firmware comparison performance</li>
+                </ul>
+            </li>
+            <li>Misc:
+                <ul>
+                    <li>Removed search redirect in case of one result</li>
+                    <li>Install nodejs dependencies in nodeenv</li>
+                    <li>Updated installed PostgreSQL version to 17</li>
+                    <li>Documentation fixes and improvements</li>
+                    <li>Removed support for EoL distros Debian 11 and Ubuntu 20.04</li>
+                    <li>Added support for Debian 13 and Python 13</li>
+                    <li>Removed TLSH and "hardware analysis" plugins</li>
+                    <li>Converted remaining analysis plugins to new base class and removed the old base class</li>
+                    <li>Code refactoring</li>
+                </ul>
+            </li>
+            <li>Bug Fixes:
+                <ul>
+                    <li>Fix for exception in CVE lookup result sorting</li>
+                    <li>YARA installation fixes</li>
+                    <li>Fix for redirect loop in case of user without roles</li>
+                    <li>Text file preview fix for JSON/JS</li>
+                    <li>Multiple fixes regarding error handling in analysis plugins</li>
+                    <li>Several additional bug fixes</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>FACT 4.2 (2024-09-04)</h4>
+        <ul>
+            <li>Features:
+                <ul>
+                    <li>Web GUI:
+                        <ul>
+                            <li>System status page: per plugin progress</li>
+                            <li>Revised advanced search page (better input, syntax check)</li>
+                            <li>Clickable analysis tags (link to summary)</li>
+                        </ul>
+                    </li>
+                    <li>Plugins:
+                        <ul>
+                            <li>Users & passwords: improved password cracking wordlist</li>
+                            <li>CVE lookup: switched to new CVE data source</li>
+                            <li>CVE lookup: filter out busybox results for non-existing components</li>
+                            <li>Info leaks: find credentials in URLs</li>
+                        </ul>
+                    </li>
+                    <li>Added support for Ubuntu 24.04 and Python 3.12
+                    <li>Retired support for Ubuntu 18.04 and Python 3.7</li>
+                </ul>
+            </li>
+            <li>Performance/Efficiency Improvements:
+                <ul>
+                    <li>Optimized analysis/unpacking progress tracking</li>
+                    <li>More efficient analysis runtime stats</li>
+                    <li>Faster general stats</li>
+                    <li>Faster analysis update</li>
+                    <li>IPC analysis plugin: Ghidra optimizations</li>
+                    <li>DB optimization for certain operations with indices</li>
+                    <li>New analysis plugin base class
+                        <ul>
+                            <li>Migrated several plugins to the new base class (migrating all remaining plugins is an ongoing process)</li>
+                        </ul>
+                    </li>
+                    <li>Upload optimization (contributed by eclipsotic)</li>
+                </ul>
+            </li>
+            <li>Misc.:
+                <ul>
+                    <li>Improved CLI logging</li>
+                    <li>Improved configuration (switched to toml format)</li>
+                    <li>Added file tree icon for linux kernel images</li>
+                    <li>Updated several dependencies and fixed deprecation warnings</li>
+                </ul>
+            </li>
+            <li>Bug Fixes:
+                <ul>
+                    <li>File download suffix fix</li>
+                    <li>Unicode data sanitization fix</li>
+                    <li>Extractor connection retry fix</li>
+                    <li>Preview syntax highlighting fix</li>
+                    <li>Stats search links fix</li>
+                    <li>CWE checker memory limit fix</li>
+                    <li>Backend ulimit fix</li>
+                    <li>Several additional smaller fixes</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h4>FACT 4.1 (2023-04-05)</h4>
+        <ul>
+            <li>Major Performance Improvements: 🎉
+                <ul>
+                    <li>Significantly sped up unpacking.
+                        <ul>
+                            <li>Reduced unpacking overhead which should result in a speedup especially for small files.</li>
+                            <li>Unpacking can be several times faster for large firmware containers including many small files.</li>
+                        </ul>
+                    </li>
+                    <li>Significantly improved scaling of analysis scheduling.
+                        <ul>
+                            <li>Depending on the core count of the system and the selected plugins, the analysis can be several times quicker.</li>
+                        </ul>
+                    </li>
+                    <li>Significantly sped up firmware deletion (also used in "redo analysis").
+                        <ul>
+                            <li>
+                                <i class="fas fa-exclamation-triangle" style="color: red;"></i>
+                                A database migration with alembic is necessary (see instructions when starting FACT for the first time after an update).
+                            </li>
+                        </ul>
+                    </li>
+                </ul>
+            </li>
+            <li>Analysis Plugin Changes:
+                <ul>
+                    <li>Added new plugin for IPC (inter-process communication) analysis on ELF files.</li>
+                    <li>Improved "information_leaks" plugin (less false negatives, added detection for SVN artifacts and improved summary)</li>
+                    <li>Improved password cracking of the "users_and_passwords" plugin.</li>
+                    <li>Improved "architecture_detection" plugin with new and more precise detection methods.</li>
+                    <li>Improved resolution of version format strings in the "software_components" plugin.</li>
+                    <li>Removed the "malware_scanner" (OMS) plugin.</li>
+                </ul>
+            </li>
+            <li>Comparison Changes:
+                <ul>
+                    <li>Better text file comparison (significantly faster and can be reloaded now).</li>
+                    <li>Added a feature for finding changed configuration files to the "file_coverage" plugin.</li>
+                </ul>
+            </li>
+            <li>Web GUI Changes:
+                <ul>
+                    <li>"Update analysis" now supports changing metadata.</li>
+                    <li>Added summaries for included files (in addition to firmware containers).</li>
+                    <li>Summaries now load on demand (for faster page loading and less stress on the database).</li>
+                    <li>Added live runtime stats for analysis plugins to the plugin "cards" on the "system health" page.</li>
+                    <li>Added indicator to signify that unpacking is halted to the "system health" page.</li>
+                    <li>Improved "advanced search" (now "not equal" operator and more examples).</li>
+                    <li>Added search feature to the file tree on the analysis page.</li>
+                    <li>New icons for the file tree which support many more MIME types.</li>
+                </ul>
+            </li>
+            <li>Backend Changes:
+                <ul>
+                    <li>
+                        <i class="fas fa-exclamation-triangle" style="color: red;"></i>
+                        Changed how the configuration is propagated through FACT and added validation.
+                        Config handling in external plugins may need to be adjusted accordingly.
+                    </li>
+                    <li>Added new config option to adjust the default number of workers for each analysis plugin.</li>
+                    <li>Log files for backend, frontend and database can now be configured individually.</li>
+                    <li>Added optional authentication option for Redis.</li>
+                </ul>
+            </li>
+            <li>Improved the documentation and fixed many bugs.</li>
+        </ul>
+
+        <h4>FACT 4.0 (2022-07-21)</h4>
+        <ul>
+            <li>
+                <i class="fas fa-exclamation-triangle" style="color: red;"></i>
+                Switched analysis and comparison result database from MongoDB to PostgreSQL
+                For information on how to migrate from old MongoDB installations, please refer to
+                <a href="https://fkie-cad.github.io/FACT_core/migration.html">https://fkie-cad.github.io/FACT_core/migration.html</a>
+            </li>
+            <li>New dropdown menu for selecting the number of results on the database page.</li>
+            <li>Added and improved software and crypto signatures.</li>
+            <li>Added support for Ubuntu 22.04 Jammy Jellyfish.</li>
+            <li>Bug fixes.</li>
+        </ul>
+
+        <h4>FACT 3.3 (2022-05-06)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>New plugin for finding and checking Linux kernel configurations.</li>
+                    <li>New plugin for finding device trees.</li>
+                    <li>New plugin for matching known software from the circ.lu hash library.</li>
+                    <li>New plugin for detecting unintentionally leaked information in firmware.</li>
+                    <li>New plugin for gathering hardware information.</li>
+                    <li>The results of the cve_lookup plugin are now sorted by severity.</li>
+                    <li>Added support for additional ISAs to the architecture detection plugin.</li>
+                    <li>Added ruby and php linters to the source code analysis plugin.</li>
+                </ul>
+            </li>
+            <li>Improved loading of analysis tags.</li>
+            <li>Added support for searching firmware tags to the "basic search".</li>
+            <li>New Swagger documentation for all REST endpoints.</li>
+            <li>Added software signatures.</li>
+            <li>Added new feature to force single analysis and whole firmware analysis update (will be removed when scheduling problems are fixed).</li>
+            <li>Changed "update analysis" to skip the unpacking step ("re-do analysis" still unpacks).</li>
+            <li>Improved system monitoring page with live updates.</li>
+            <li>Improved dependency graph page.</li>
+            <li>New page for monitoring FACT logs.</li>
+            <li>New page for browsing previous "binary search" queries.</li>
+            <li>New hex preview for binary files on the analysis page.</li>
+            <li>New text file diffing feature.</li>
+            <li>Added support for Python virtual environments.</li>
+            <li>Improved CLI user management script.</li>
+            <li>Updated the web framework Flask to version 2.0
+                <ul>
+                    <li>
+                        <i class="fas fa-exclamation-triangle" style="color: red;"></i>
+                        If you use FACT with authentication, it is necessary to run the script
+                        <code>src/migrate_database.py</code>
+                        to convert the old user database to the new format
+                    </li>
+                </ul>
+            </li>
+            <li>Improved documentation.</li>
+            <li>Bug fixes, stability improvements and better error reporting.</li>
+        </ul>
+
+        <h4>FACT 3.2 (2021-05-21)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>New plugin to highlight most relevant uris, such as cloud endpoints.</li>
+                    <li>Extended exploit mitigation detection.</li>
+                    <li>Improved script language detection for source code analysis.</li>
+                    <li>Added detection of encrypted private keys.</li>
+                    <li>Added support for mosquitto password style.</li>
+                    <li>Improved cwe_checker integration.</li>
+                </ul>
+            </li>
+            <li>Added graph mapping of dependencies between binaries and libraries in a firmware.</li>
+            <li>Added fedora support and prepared for RHEL and Cent support.</li>
+            <li>Added Mint 20 support.</li>
+            <li><b>Warning: Removed support for python 3.5 and Ubuntu 16.04 as planned.</b></li>
+            <li>Integrated sphinx documentation for library-like helperFunctions module.</li>
+            <li>Statistics page now largely uses pie charts instead of bars.</li>
+            <li>Added rest endpoint for statistics.</li>
+            <li>Currently analyzed firmware now listed with a progress bar on system page.</li>
+            <li>Structural changes regarding the "virtual file path" (<b>Warning:</b> Changes in custom plugins may be necessary).</li>
+            <li>Failed analyses are now listed on the /admin/missing_analyses view.</li>
+            <li>Started adding tooltips to statistics page.</li>
+            <li>Added feeback modal to UI - with links to multiple feedback options.</li>
+            <li>Removed legacy changes to local environment.</li>
+            <li>Added multiple configuration options for better customization.</li>
+            <li>Optimized performance and data storage.</li>
+            <li>Bug fixes.</li>
+        </ul>
+
+        <h4>FACT 3.1 (2020-05-28)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>New CVE lookup plug-in to match software to known vulnerabilities</li>
+                    <li>New plug-in to identify input vectors for executables (e.g. file, network, environment, stdin)</li>
+                    <li>New software signatures added</li>
+                    <li>Crypto hints plug-in added</li>
+                    <li><b>Warning:</b> Removed Base64 plug-in</li>
+                </ul>
+            </li>
+            <li>Ubuntu 20.04 (Focal Fossa) support</li>
+            <li>Major refactoring of WebUI (Moved from bs3 to bs4)</li>
+            <li>Dynamic generation of analysis summary</li>
+            <li>Navigation bar restructured</li>
+            <li>Added experimental support for multiple Debian and Kali releases as well as Ubuntu 19.04</li>
+            <li><b>Warning:</b> Hex view was removed as planned</li>
+            <li>Binary search now supports directly listing parent firmware of matches</li>
+            <li>Added endpoint to search for incomplete analyses</li>
+            <li>Backend statistics now lists running processes</li>
+            <li>Various smaller improvements</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 3.0 (2019-07-31)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>New "tlsh" analysis plugin for finding similar files accross the database</li>
+                    <li>Major refactoring of QEMU plugin (improved stability, more feedback)</li>
+                    <li>Added tlsh to file hashes plugin</li>
+                </ul>
+            </li>
+            <li>Moved unpacking to standalone project, integrated via docker</li>
+            <li>Added automatic PDF report generation (stable, template in alpha)</li>
+            <li>Added REST endpoint for system monitoring</li>
+            <li>Added button to start analysis plugins on single file or firmware objects</li>
+            <li>Revised statistics page</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.6 (2019-04-03)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Linter plug-in for source code analysis (js, lua, python, sh)</li>
+                    <li>Plug-in to test executables for compatibility with QEMU emulation</li>
+                    <li>Plug-in for displaying file system metadata information</li>
+                    <li>ELF analysis plug-in added</li>
+                    <li><a href="https://github.com/fkie-cad/cwe_checker">CWE-Checker</a></li>
+                    <li>New software signatures added</li>
+                    <li>New known vulnerabilities added</li>
+                </ul>
+            </li>
+            <li>New or Improved Unpacking
+                <ul>
+                    <li>dahua firmware image unpacker added</li>
+                    <li>intel hex unpacker added</li>
+                    <li>hp pjl</li>
+                    <li>raw</li>
+                </ul>
+            </li>
+            <li><b>Changed installation!</b> Path to install.py has changed and installation is now wrapped in python for better overview and failure tracking.</li>
+            <li>New <a href="https://github.com/fkie-cad/FACT_core/blob/master/INSTALL.md">INSTALL.md</a> for better documentation of installation options</li>
+            <li>Added software components statistics</li>
+            <li>Added REST endpoint for binary search (YARA)</li>
+            <li>Added unified mime-type-based analysis blacklist feature</li>
+            <li>Added syntax highlighting for code preview</li>
+            <li>Improved analysis caching</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.5 (2018-08-01)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Known vulnerabilities plug-in added</li>
+                    <li>IP and URI finder Geo IP support</li>
+                    <li>Printable strings: Offsets are shown</li>
+                    <li>More software signatures added</li>
+                </ul>
+            </li>
+            <li>New or Improved Unpacking
+                <ul>
+                    <li>Debian package unpacking plug-in added</li>
+                </ul>
+            </li>
+            <li><a href="https://github.com/fkie-cad/FACT_core/wiki/radare-integration">Radare view allows opening objects in radare2-webui</a></li>
+            <li><b>Warning:</b> Hex view is deprecated and is going to be removed in 3.1</li>
+            <li>Device part meta data support</li>
+            <li>Quick download buttons added</li>
+            <li><a href="https://github.com/fkie-cad/FACT_core/wiki/analysis-plugin-presets">Analysis preset support</a></li>
+            <li>Interim result publishing</li>
+            <li>Intercom speedup</li>
+            <li>Ubuntu 18.04 support</li>
+            <li>YARA backend upgraded</li>
+            <li><b>Warning:</b> Default MongoDB path changed!</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.4 (2018-03-16)</h4>
+        <ul>
+            <li>New or Improved Unpacker
+                <ul>
+                    <li>Xerox</li>
+                </ul>
+            </li>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>file header compare plug-in</li>
+                </ul>
+            </li>
+            <li>Full fledged user <a href="https://github.com/fkie-cad/FACT_core/wiki/Authentication">authentication system</a></li>
+            <li>Supporting custom routes for plug-ins</li>
+            <li>Compare view definition moved to plug-in</li>
+            <li>Firmware tagging feature</li>
+            <li>Imprint feature</li>
+            <li>Improved usability</li>
+            <li>Compare speedup</li>
+            <li>Acceptance test speedup</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.3 (2017-12-24)</h4>
+        <ul>
+            <li>New or Improved Unpacker
+                <ul>
+                    <li>SquashFS: AVM support</li>
+                </ul>
+            </li>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Exploit mitigation plug-in</li>
+                    <li>Imphash</li>
+                </ul>
+            </li>
+            <li>Quick search</li>
+            <li>Compare result browsing</li>
+            <li>Convenient compare trigger on analysis page</li>
+            <li>REST: Update analysis without unpacking</li>
+            <li>Improved usability</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.2 (2017-09-21) (first public release)</h4>
+        <ul>
+            <li>Base64 Decoder improved</li>
+            <li>Enhanced error handling</li>
+            <li>REST API improved</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.1 (2017-08-23)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Init Services</li>
+                </ul>
+            </li>
+            <li>Memory consumption reduced</li>
+            <li>Load balancing improved</li>
+            <li>Hex header view</li>
+            <li>Unittest &rarr; Pytest</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+        <h4>FACT 2.0 (2017-07-31)</h4>
+        <ul>
+            <li>New project name: FAF &rarr; FACT </li>
+            <li>New color scheme</li>
+            <li>New plug-in system</li>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Base64 Decoder</li>
+                    <li>Software Detection: magic support</li>
+                    <li>String Evaluator: printable string sorting</li>
+                </ul>
+            </li>
+            <li>YARA backend upgraded</li>
+            <li>Unpacking Classifier: encoding overhead consideration implemented</li>
+            <li>Code clean ups</li>
+            <li>Bug fixes</li>
+        </ul>
+
+
+        <h4>FAF 1.4 (2017-04-24)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li><i>Re-Do Analysis</i> feature added</li>
+                </ul>
+            </li>
+            <li>Release date statistic added</li>
+            <li>Statistic filtering feature added</li>
+            <li>Frontend refactoring</li>
+            <li>Silent Mode added</li>
+            <li>Bug fixes</li>
+            <li>Code clean ups</li>
+        </ul>
+
+
+        <h4>FAF 1.3 (2017-03-21)</h4>
+        <ul>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>Identify users and passwords</li>
+                </ul>
+            </li>
+            <li>New or Improved Unpacking
+                <ul>
+                    <li>DJI Drone Firmware unpacker added</li>
+                    <li>UBI-Image unpacker added</li>
+                    <li>Zip and 7z password support added</li>
+                </ul>
+            </li>
+            <li>Several statistics added</li>
+            <li>System Health Monitoring</li>
+            <li>Statistic Graph Framework changed</li>
+            <li>Optical improvements</li>
+            <li>Bug fixes</li>
+            <li>Code clean ups</li>
+        </ul>
+
+        <h4>FAF 1.2 (2017-02-01)</h4>
+        <ul>
+            <li>New or Improved Unpacker
+                <ul>
+                    <li>yaffs2</li>
+                    <li>trx (generic)</li>
+                    <li>tpl</li>
+                    <li>self extracting archive</li>
+                    <li>elf and pe</li>
+                </ul>
+            </li>
+            <li>New or Improved Analysis
+                <ul>
+                    <li>IP and Domain search plug-in</li>
+                    <li>printable strings plug-in now supports 16bit characters</li>
+                </ul>
+            </li>
+            <li><i>Advanced Search</i> database map added</li>
+            <li>Latest compares and comments shown on start page</li>
+            <li>Delete comment feature added</li>
+            <li>Linux Mint 18.1 support added</li>
+            <li>Bug fixes</li>
+            <li>Code clean ups</li>
+        </ul>
+
+        <h4>FAF 1.1 (2016-12-20)</h4>
+        <ul>
+            <li><i>Architecture detection</i> utilizing meta data</li>
+            <li><i>Firmware summary search</i> feature added</li>
+            <li><i>GenericFS fallback</i> feature added</li>
+            <li>Firmware removal feature added</li>
+            <li>Unpack info and statistic added</li>
+            <li>Clickable results on statistic page</li>
+            <li>Further LZMA signatures added</li>
+            <li>Performance enhancements</li>
+            <li>Integration tests</li>
+            <li>Bug fixes</li>
+            <li>Code clean ups</li>
+        </ul>
+
+        <h4>FAF 1.0 (2016-10-28)</h4>
+        <ul>
+            <li><i>File tree view</i> replaces <i>included files list</i></li>
+            <li><i>Binary search</i> feature added</li>
+            <li>Statistic page added</li>
+            <li>General stats and last uploads added to <i>Home</i> page</li>
+            <li>UWSGI support</li>
+            <li>Analysis cache added</li>
+            <li>Bug fixes</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,463 @@
+import logging
+from base64 import b64encode
+from time import gmtime
+from zlib import compress
+
+import pytest
+
+import web_interface.filter as flt
+from test.common_helper import create_test_file_object
+
+UNSORTABLE_LIST = [[], ()]
+
+
+def test_set_limit_for_data_to_chart():
+    limit = 5
+    label_list = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+    value_list = [1, 2, 3, 4, 5, 6, 7]
+    expected_result = (['a', 'b', 'c', 'd', 'e', 'rest'], [1, 2, 3, 4, 5, 13])
+    assert flt.set_limit_for_data_to_chart(label_list, limit, value_list) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_data', 'expected_result'),
+    [
+        (
+            [('NX enabled', 1696, 0.89122), ('NX disabled', 207, 0.10878), ('Canary enabled', 9, 0.00473)],
+            {
+                'labels': ['NX enabled', 'NX disabled', 'Canary enabled'],
+                'datasets': [
+                    {
+                        'data': [1696, 207, 9],
+                        'percentage': [0.89122, 0.10878, 0.00473],
+                        'backgroundColor': ['#4062fa', '#f4c069', '#4062fa'],
+                        'borderWidth': 0,
+                        'links': 'null',
+                    }
+                ],
+            },
+        ),
+        ([()], None),
+    ],
+)
+def test_data_to_chart_with_value_percentage_pairs(input_data, expected_result):
+    assert flt.data_to_chart_with_value_percentage_pairs(input_data) == expected_result
+
+
+def test_get_all_uids_in_string():
+    test_string = (
+        "{'d41c0f1431b39b9db565b4e32a5437c61c77762a3f4401bac3bafa4887164117_24', "
+        "'f7c927fb0c209035c7e6939bdd00eabdaada429f2ee9aeca41290412c8c79759_25' , "
+        "'deaa23651f0a9cc247a20d0e0a78041a8e40b144e21b82081ecb519dd548eecf_24494080'}"
+    )
+    result = flt.get_all_uids_in_string(test_string)
+    assert len(result) == 3, 'not all uids found'
+    assert 'd41c0f1431b39b9db565b4e32a5437c61c77762a3f4401bac3bafa4887164117_24' in result, 'first uid not found'
+    assert 'f7c927fb0c209035c7e6939bdd00eabdaada429f2ee9aeca41290412c8c79759_25' in result, 'second uid not found'
+    assert 'deaa23651f0a9cc247a20d0e0a78041a8e40b144e21b82081ecb519dd548eecf_24494080' in result, 'third uid not found'
+
+
+def test_handle_uids():
+    test_string = 'foo d41c0f1431b39b9db565b4e32a5437c61c77762a3f4401bac3bafa4887164117_24 bar'
+    result = flt.uids_to_link(test_string)
+    expected_result = (
+        'foo <a href="/analysis/d41c0f1431b39b9db565b4e32a5437c61c77762a3f4401bac3bafa4887164117_24/'
+        'ro/None">d41c0f1431b39b9db565b4e32a5437c61c77762a3f4401bac3bafa4887164117_24</a> bar'
+    )
+    assert result == expected_result, 'output not correct'
+
+
+@pytest.mark.parametrize(
+    'input_data',
+    [
+        ['a', 'b'],
+        set('ab'),
+        b'ab',
+        'ab',
+    ],
+)
+def test_nice_list(input_data):
+    expected = (
+        '<ul class="list-group list-group-flush">\n'
+        '\t<li class="list-group-item">a</li>\n'
+        '\t<li class="list-group-item">b</li>\n'
+        '</ul>\n'
+    )
+    result = flt.list_group(input_data)
+    assert result == expected, 'output not correct'
+
+
+def test_nice_unix_time_stamp():
+    input_data = 1459427460
+    assert flt.nice_unix_time(input_data).startswith('2016-03-31')
+    assert flt.nice_unix_time(input_data).endswith(':31:00')
+
+    input_data = 1459427460.4
+    assert flt.nice_unix_time(input_data).startswith('2016-03-31')
+    assert flt.nice_unix_time(input_data).endswith(':31:00')
+
+    assert flt.nice_unix_time('test') == 'test'
+
+
+def test_sort_chart_list_by_value():
+    test_list = [['a', 1], ['b', 2]]
+    result = flt.sort_chart_list_by_value(test_list)
+    assert result == [['b', 2], ['a', 1]]
+
+
+def test_fix_cwe_valid_string():
+    assert flt.fix_cwe('[CWE467] (Use of sizeof on a Pointer Type)') == '467'
+
+
+def test_fix_cwe_invalid_string():
+    assert flt.fix_cwe('something_really_strange') == ''
+
+
+def test_replace_underscore():
+    assert flt.replace_underscore_filter('a_b') == 'a b'
+
+
+@pytest.mark.parametrize(
+    ('input_data', 'verbose', 'expected'),
+    [
+        (1000, False, '1000 bytes'),
+        (1024, False, '1.00 KiB'),
+        (1024 * 1024, False, '1.00 MiB'),
+        (1234, False, '1.21 KiB'),
+        (1234, True, '1.21 KiB (1,234 bytes)'),
+        (1000, True, '1000 bytes'),
+        (b'abc', False, 'not available'),
+        (None, False, 'not available'),
+    ],
+)
+def test_byte_number_filter(input_data, verbose, expected):
+    assert flt.byte_number_filter(input_data, verbose) == expected
+
+
+@pytest.mark.parametrize(
+    ('input_data', 'expected'),
+    [(b'abc', "b'abc'"), (123, '123'), (1234, '1,234'), (1234.1234, '1,234.12'), (None, 'not available')],
+)
+def test_nice_number(input_data, expected):
+    assert flt.nice_number_filter(input_data) == expected
+
+
+@pytest.mark.parametrize(
+    ('input_data', 'expected'),
+    [
+        (b'abc', 'abc'),
+        (1234, '1,234'),
+        (
+            [1, 3],
+            '<ul class="list-group list-group-flush">\n'
+            '\t<li class="list-group-item">1</li>\n'
+            '\t<li class="list-group-item">3</li>\n'
+            '</ul>\n',
+        ),
+        ({'a': 1}, 'a: 1<br />'),
+        (gmtime(0), '1970-01-01 - 00:00:00'),
+        ('a_b', 'a b'),
+        (gmtime, gmtime),
+    ],
+)
+def test_generic_nice_representation(input_data, expected):
+    assert flt.generic_nice_representation(input_data) == expected
+
+
+@pytest.mark.parametrize(('score', 'class_'), [('low', 'active'), ('medium', 'warning'), ('high', 'danger')])
+def test_vulnerability_class_success(score, class_):
+    assert flt.vulnerability_class(score) == class_
+
+
+@pytest.mark.parametrize('score', [None, '', 'bad', 5])
+def test_vulnerability_class_bad(score):
+    assert flt.vulnerability_class(score) is None
+
+
+def test_sort_users_by_name():
+    class UserMock:
+        def __init__(self, id_, name):
+            self.id = id_
+            self.email = name
+
+    user_1 = UserMock(1, 'b')
+    user_2 = UserMock(2, 'd')
+    user_3 = UserMock(3, 'a')
+    user_4 = UserMock(4, 'c')
+    user_list = [user_1, user_2, user_3, user_4]
+
+    assert flt.sort_users_by_name(user_list) == [user_3, user_1, user_4, user_2]
+
+
+class CurrentUserMock:
+    def __init__(self, is_authenticated, roles):
+        self.is_authenticated = is_authenticated
+        self.roles = roles
+
+    def has_role(self, role):
+        return role in self.roles
+
+
+@pytest.mark.parametrize(
+    ('user', 'role', 'expected_result'),
+    [
+        (CurrentUserMock(False, []), 'manage_users', False),
+        (CurrentUserMock(False, ['superuser']), 'manage_users', False),
+        (CurrentUserMock(True, []), 'manage_users', False),
+        (CurrentUserMock(True, ['superuser']), 'manage_users', True),
+    ],
+)
+def test_user_has_role(user, role, expected_result):
+    assert flt.user_has_role(user, role) == expected_result
+
+
+def test_sort_roles_by_number_of_privileges():
+    roles = ['a', 'b', 'c']
+    privileges = {
+        'p_1': ['b'],
+        'p_2': ['a', 'b', 'c'],
+        'p_3': ['b', 'c'],
+        'p_4': [],
+    }
+    result = flt.sort_roles_by_number_of_privileges(roles, privileges)
+    assert result == ['a', 'c', 'b']
+
+
+def test_filter_decompress():
+    test_string = 'test123'
+    assert flt.decompress(b64encode(compress(test_string.encode())).decode()) == test_string
+    assert flt.decompress(test_string) == test_string
+    assert flt.decompress(None) is None
+
+
+@pytest.mark.parametrize(
+    ('list_of_dicts', 'expected_result'),
+    [
+        ([], set()),
+        ([{'1': ''}], {'1'}),
+        ([{'1': ''}, {'1': '', '2': ''}, {'1': '', '2': '', '3': ''}], {'1', '2', '3'}),
+    ],
+)
+def test_get_unique_keys_from_list_of_dicts(list_of_dicts, expected_result):
+    assert flt.get_unique_keys_from_list_of_dicts(list_of_dicts) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('list_of_dicts', 'key', 'expected_result'),
+    [
+        ([], '', {}),
+        ([{'a': '1'}, {'a': '1'}, {'a': '2'}], 'a', {'1': [{'a': '1'}, {'a': '1'}], '2': [{'a': '2'}]}),
+    ],
+)
+def test_group_dict_list_by_key(list_of_dicts, key, expected_result):
+    assert flt.group_dict_list_by_key(list_of_dicts, key) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_dict', 'expected_result'),
+    [
+        ({}, {}),
+        ({'a': 1}, {'a': 1}),
+        ({'/a/b/c': 1, '/a/b/d': 2, '/a/e': 3}, {'a': {'b': {'c': 1, 'd': 2}, 'e': 3}}),
+    ],
+)
+def test_grp_changed_text_file_data(input_dict, expected_result):
+    assert flt.group_path_dict_by_dirs(input_dict) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('function', 'input_data', 'expected_output', 'error_message'),
+    [
+        (
+            flt._get_sorted_list,
+            UNSORTABLE_LIST,
+            UNSORTABLE_LIST,
+            'Could not sort list',
+        ),
+        (flt.sort_comments, UNSORTABLE_LIST, [], 'Could not sort comment list'),
+        (flt.sort_chart_list_by_value, UNSORTABLE_LIST, [], 'Could not sort chart list'),
+    ],
+)
+def test_error_logging(function, input_data, expected_output, error_message, caplog):
+    with caplog.at_level(logging.WARNING):
+        assert function(input_data) == expected_output
+        assert error_message in caplog.messages[0]
+
+
+def test_version_links_no_analysis():
+    links = flt.create_firmware_version_links([('uid_123', '1.0'), ('uid_234', '1.1')])
+    assert '<a href="/analysis/uid_123">1.0</a>' in links
+    assert '<a href="/analysis/uid_234">1.1</a>' in links
+
+
+def test_version_links_with_analysis():
+    links = flt.create_firmware_version_links([('uid_123', '1.0'), ('uid_234', '1.1')], 'foo')
+    assert '<a href="/analysis/uid_123/foo">1.0</a>' in links
+    assert '<a href="/analysis/uid_234/foo">1.1</a>' in links
+
+
+def test_random_collapse_id():
+    collapse_id = flt.random_collapse_id()
+    assert isinstance(collapse_id, str)
+    assert not collapse_id[0].isnumeric()
+
+
+@pytest.mark.parametrize(
+    ('input_string', 'expected_result'),
+    [
+        ('foo_bar-1-23', 'foo_bar-1-23'),
+        ('CVE-1-2', '<a href="https://nvd.nist.gov/vuln/detail/CVE-1-2">CVE-1-2</a>'),
+        (
+            'a CVE-1-2 b CVE-3-4 c',
+            'a <a href="https://nvd.nist.gov/vuln/detail/CVE-1-2">CVE-1-2</a> b '
+            '<a href="https://nvd.nist.gov/vuln/detail/CVE-3-4">CVE-3-4</a> c',
+        ),
+    ],
+)
+def test_replace_cve_with_link(input_string, expected_result):
+    assert flt.replace_cve_with_link(input_string) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_string', 'expected_result'),
+    [
+        ('foo_bar-1', 'foo_bar-1'),
+        ('CWE-123', '<a href="https://cwe.mitre.org/data/definitions/123.html">CWE-123</a>'),
+        (
+            'a CWE-1 b CWE-1234 c',
+            'a <a href="https://cwe.mitre.org/data/definitions/1.html">CWE-1</a> b '
+            '<a href="https://cwe.mitre.org/data/definitions/1234.html">CWE-1234</a> c',
+        ),
+    ],
+)
+def test_replace_cwe_with_link(input_string, expected_result):
+    assert flt.replace_cwe_with_link(input_string) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_list', 'expected_result'),
+    [
+        ([], []),
+        (
+            [
+                {'id': 'cve_id1', 'scores': [{'version': 'V2', 'score': '6.0'}, {'version': 'V3.0', 'score': '2.0'}]},
+                {'id': 'cve_id2', 'scores': [{'version': 'V2', 'score': '4.0'}, {'version': 'V3.0', 'score': '3.0'}]},
+                {'id': 'cve_id3', 'scores': [{'version': 'V2', 'score': '1.0'}, {'version': 'V3.0', 'score': '5.0'}]},
+            ],
+            ['cve_id1', 'cve_id3', 'cve_id2'],
+        ),
+        (
+            [
+                {'id': 'cve_id1', 'scores': [{'version': 'V2', 'score': '1.3'}, {'version': 'V3.0', 'score': '0.0'}]},
+                {'id': 'cve_id2', 'scores': [{'version': 'V2', 'score': '10.0'}, {'version': 'V3.0', 'score': '0.0'}]},
+                {'id': 'cve_id3', 'scores': [{'version': 'V2', 'score': '2.6'}, {'version': 'V3.0', 'score': '0.0'}]},
+            ],
+            ['cve_id2', 'cve_id3', 'cve_id1'],
+        ),
+        (
+            [
+                {'id': 'cve_id1', 'scores': [{'version': 'V2', 'score': '5.0'}, {'version': 'V3.0', 'score': '2.0'}]},
+                {'id': 'cve_id2', 'scores': [{'version': 'V2', 'score': '5.0'}, {'version': 'V3.0', 'score': '3.0'}]},
+                {'id': 'cve_id3', 'scores': [{'version': 'V2', 'score': '5.0'}, {'version': 'V3.0', 'score': '4.0'}]},
+            ],
+            ['cve_id3', 'cve_id2', 'cve_id1'],
+        ),
+        (
+            [
+                {'id': 'cve_id1', 'scores': [{'version': 'V3.0', 'score': '1.0'}]},
+                {'id': 'cve_id2', 'scores': [{'version': 'V2', 'score': '2.0'}]},
+                {'id': 'cve_id3', 'scores': []},
+            ],
+            ['cve_id2', 'cve_id1', 'cve_id3'],
+        ),
+    ],
+)
+def test_sort_cve_result(input_list, expected_result):
+    sorted_list = flt.sort_cve_results(input_list)
+    id_list = [e['id'] for e in sorted_list]
+    assert id_list == expected_result
+
+
+def test_as_ascii_table():
+    output = flt.as_ascii_table(
+        {
+            'left': 'right',
+            'foo': 'bar',
+        }
+    )
+    # Makes the pytest output more readable
+    output = output.replace(' ', '.')
+    assert output == 'left       right     \nfoo        bar       \n'.replace(' ', '.')
+
+
+@pytest.mark.parametrize(
+    ('input_', 'include_type', 'expected_result'),
+    [
+        ('755', True, 'rwxr-xr-x'),
+        ('755', False, 'rwxr-xr-x'),
+        ('104666', True, '-rwSrw-rw-, regular file'),
+        ('104666', False, '-rwSrw-rw-'),
+        ('40777', True, 'drwxrwxrwx, directory'),
+        ('40777', False, 'drwxrwxrwx'),
+    ],
+)
+def test_octal_to_readable(input_, include_type, expected_result):
+    assert flt.octal_to_readable(input_, include_type=include_type) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('type_analysis', 'expected_result'),
+    [
+        ({'file_type': {}}, False),
+        ({'file_type': {'result': {'mime': 'image/png'}}}, True),
+        ({'file_type': {'result': {'mime': 'text/plain'}}}, True),
+        ({'file_type': {'result': {'mime': 'application/octet-stream'}}}, False),
+        ({'file_type': {'result': {'mime': 'application/javascript'}}}, True),
+    ],
+)
+def test_is_text_file_or_image(type_analysis, expected_result):
+    fo = create_test_file_object(analyses=type_analysis)
+    assert flt.is_text_file_or_image(fo) == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_', 'expected_result'),
+    [
+        ([], []),
+        ([{'a': 2}, {'a': 1}, {'a': 3}], [{'a': 1}, {'a': 2}, {'a': 3}]),
+        ([{'a': 2}, {'a': 1}, {'b': 3}], [{'b': 3}, {'a': 1}, {'a': 2}]),
+        ([{'a': 'b'}, {'a': 'c'}, {'a': 'a'}], [{'a': 'a'}, {'a': 'b'}, {'a': 'c'}]),
+    ],
+)
+def test_sort_dict_list_by_key(input_, expected_result):
+    assert flt.sort_dict_list_by_key(input_, 'a') == expected_result
+
+
+@pytest.mark.parametrize(
+    ('input_', 'expected_result'),
+    [
+        ([], []),  # test empty
+        (  # test IPv4
+            [{'address': '4.2.3.1'}, {'address': '1.2.3.4'}, {'address': '3.4.2.1'}, {'address': '2.3.1.4'}],
+            [{'address': '1.2.3.4'}, {'address': '2.3.1.4'}, {'address': '3.4.2.1'}, {'address': '4.2.3.1'}],
+        ),
+        (  # test IPv6
+            [
+                {'address': '2001:0db8:85a3:08d3::0370:7344'},
+                {'address': '2001:0db8::'},
+                {'address': '::1'},
+                {'address': 'fec0::'},
+            ],
+            [
+                {'address': '::1'},
+                {'address': '2001:0db8::'},
+                {'address': '2001:0db8:85a3:08d3::0370:7344'},
+                {'address': 'fec0::'},
+            ],
+        ),
+        # test fallback
+        ([{'address': '4.2.3.1'}, {'address': 'a.b.c'}], [{'address': 'a.b.c'}, {'address': '4.2.3.1'}]),
+    ],
+)
+def test_sort_ip_list(input_, expected_result):
+    assert flt.sort_ip_list(input_) == expected_result

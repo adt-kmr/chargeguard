@@ -1,0 +1,36 @@
+<table class="table table-bordered">
+    <colgroup>
+        <col width="100">
+        <col width="700">
+    </colgroup>
+    <thead class="thead-light">
+        <tr>
+            <th class="p-0" id="summary-heading" colspan=2></th>
+        </tr>
+    </thead>
+    {% if summary_of_included_files %}
+    <tr>
+        <td class="table-head-light">Item count</td>
+        <td>{{ summary_of_included_files | length }}
+    </tr>
+        {% for item in summary_of_included_files | sort %}
+            <tr>
+                {% if not inverted %}
+                    <td>{{ item | wordwrap(width=60, break_long_words=True) }}</td>
+                    <td>
+                        {{ summary_of_included_files[item] | nice_uid_list(root_uid=root_uid, selected_analysis=selected_analysis) | safe }}
+                    </td>
+                {% else %}
+                    <td style="word-break: break-all;">{{ item | replace_uid_with_hid_link | safe }}</td>
+                    <td>
+                        {{ summary_of_included_files[item] | list_group_collapse | safe }}
+                    </td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+    {% else %}
+        <tr>
+            <td class="table-warning" colspan=2 style="text-align: center">No summary found</td>
+        </tr>
+    {% endif %}
+</table>

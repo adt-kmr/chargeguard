@@ -1,0 +1,129 @@
+
+<script>
+    $(document).ready(function() {
+
+        $(".collapse").on('show.bs.collapse', function(){
+            // event: collapsible content is starting to expand
+            const id = $(this).prop('id');
+            const loading_gif = document.getElementById(id + '_gif');
+
+            if (isEmpty($(this))) {
+                loading_gif.style.display = "block";
+                $(this).load('/compare/ajax_common_files/{{ result["_id"] }}/' + id + '/', function() {
+                    loading_gif.style.display = "none";
+                });
+            }
+        });
+
+        function isEmpty(element) {
+            return !$.trim(element.html())
+        }
+
+    });
+</script>
+<script src="{{ url_for('static', filename='js/file_tree.js') }}"></script>
+
+<style>
+    .internal-table td {
+        border: 0;
+        border-top: 1px solid #dee2e6 !important;
+        vertical-align: middle;
+        padding-left: 20px;
+    }
+</style>
+
+{% for feature in result['plugins'][plugin] | sort %}
+
+    {# --- similar files exception ---#}
+    {% if feature == 'similar_files' %}
+        <tr><th colspan="{{ uid_list | length + 1 }}" style="text-align:center;" class="table-head-light">SSDEEP Similarity</th></tr>
+        {% if not result['plugins'][plugin][feature] %}
+            <tr>
+                <td colspan="{{ uid_list | length + 1 }}" style="text-align:center;">No similar files found</td>
+            </tr>
+        {% endif %}
+        {% for match in result['plugins'][plugin][feature] %}
+            <tr>
+                <td style="text-align:right;" class="table-head-light">{{ result['plugins'][plugin][feature][match]['similarity'] }}</td>
+            {% for uid in uid_list %}
+                <td>{{ result['plugins'][plugin][feature][match][uid] | replace_uid_with_hid_link | safe }}</td>
+            {% endfor %}
+            </tr>
+        {% endfor %}
+
+    {% elif feature == 'exclusive_files' %}
+        <td> {{ feature | replace_underscore }} </td>
+        {% for firmware_uid in uid_list %}
+            {% if firmware_uid != "collapse" %}
+            <td style="font-size: 14px;">
+                <div id="fileTreeAjax_{{ loop.index }}"></div>
+                {# --- file tree ---#}
+                <script>
+                    create_file_tree(
+                        $('#fileTreeAjax_{{ loop.index }}'),
+                        false,
+                        (node) => node.id === '#' ?
+                            // root node url
+                            "/ajax_root/{{ firmware_uid|safe }}/{{ firmware_uid|safe }}" :
+                            // inner node url
+                            "/compare/ajax_tree/{{ result["_id"] }}/{{ firmware_uid }}/" + node["data"]["uid"]
+                    );
+                </script>
+            </td>
+            {% endif %}
+        {% endfor %}
+
+    {% elif feature == 'changed_text_files' %}
+        <tr>
+            <td data-toggle="tooltip" data-placement="right" title="text files with identical paths but different content">changed text files</td>
+            <td colspan="{{ uid_list | length }}">
+                <div class="list-group">
+                    <div role="button" data-toggle="collapse" data-target="#changed_text_files" class="list-group-item list-group-item-primary d-flex justify-content-between align-items-center" aria-expanded="false">
+                        show files<span class="badge badge-pill badge-primary">{{ result['plugins'][plugin][feature] | length }}</span>
+                    </div>
+                    <div id="changed_text_files" class="collapse">
+                        <div class="list-group list-group-flush">
+                            {{ result['plugins'][plugin][feature] | group_changed_text_files | render_changed_text_files | safe }}
+                        </div>
+                    </div>
+                </div>
+            </td>
+        <tr>
+
+    {% else %}
+        <tr>
+            <td>{{ feature | replace_underscore }}</td>
+
+            {# --- all case --- #}
+            {% if 'all' in result['plugins'][plugin][feature] %}
+                <td colspan="{{ uid_list | length }}">
+                    <div class="list-group">
+                        <div role="button" data-toggle="collapse" data-target="#{{ feature + '___all' }}" class="list-group-item list-group-item-primary d-flex justify-content-between align-items-center">
+                            show files<span class="badge badge-pill badge-primary">{{ result['plugins'][plugin][feature]['all'] | length }}</span>
+                        </div>
+                        <div id="{{ feature + '___all' }}" class="collapse"></div>
+                        <div id="{{ feature + '___all' + '_gif' }}" style="display: none;">
+                            <img src="{{ url_for('static', filename = 'Pacman.gif') }}" width="50px">
+                        </div>
+                    </div>
+                </td>
+
+            {# --- individual results --- #}
+            {% else %}
+                {% for uid in uid_list %}
+                    <td>
+                        <div class="list-group">
+                            <div role="button" data-toggle="collapse" data-target="#{{ feature + '___' + uid }}" class="list-group-item list-group-item-primary d-flex justify-content-between align-items-center">
+                                show files<span class="badge badge-pill badge-primary">{{ result['plugins'][plugin][feature][uid] | length }}</span>
+                            </div>
+                            <div id="{{ feature + '___' + uid }}" class="collapse"></div>
+                            <div id="{{ feature + '___' + uid + '_gif' }}" style="display: none;">
+                                <img src="{{ url_for('static', filename = 'Pacman.gif') }}" width="50px">
+                            </div>
+                        </div>
+                    </td>
+                {% endfor %}
+            {% endif %}
+        </tr>
+    {% endif %}
+{% endfor %}

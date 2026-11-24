@@ -1,0 +1,42 @@
+# Logging
+install.log
+src/install.log
+
+# Plugin artifacts
+src/analysis/signatures/
+src/plugins/*/*/bin
+src/plugins/analysis/crypto_hints/signatures/crypto_signatures.yar
+src/plugins/analysis/cve_lookup/internal/database/cve_cpe.db
+src/plugins/analysis/qemu_exec/test/data/test_tmp_dir
+src/plugins/analysis/qemu_exec/test/data/test_tmp_dir_2
+src/plugins/analysis/users_and_passwords/internal/passwords/10k-most-common.txt
+
+
+# Misc
+__pycache__
+docsrc/_build/
+docs/.buildinfo/
+src/bin
+src/web_interface/static/nodeenv/
+src/web_interface/static/node_modules
+src/web_interface/static/file_icons
+FACT_export
+
+# pytest
+.pytest_cache
+.coverage*
+!.coveragerc
+
+# Start scripts
+start_all_installed_fact_components
+start_fact_backend
+start_fact_database
+start_fact_frontend
+
+# Editor specific files
+.vscode
+.idea
+## Eclipse
+.project
+.settings
+.pydevproject

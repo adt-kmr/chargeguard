@@ -1,0 +1,88 @@
+{% macro stats_panel(panel_title, icon="chart-bar") %}
+    <!-- stats: {{ panel_title }} -->
+    <div class="col-md-12 col-lg-6 col-xl-4 mb-4 px-2">
+        <div class="card p-1 bg-light rounded border-0 h-100">
+            <div class="card-body bg-light">
+                <h5 class="card-title mb-3"><i class="fas fa-{{ icon }}"></i> {{ panel_title }}</h5>
+                {{ caller() }}
+            </div>
+        </div>
+    </div>
+{% endmacro %}
+
+{% macro stats_table_row(label, value, percent=False, link=None, tooltip=None) %}
+    <tr>
+        <td style="text-align: left; padding:5px"
+                {%- if link %} onclick="location.href='{{ link }}'"{% endif -%}
+                {%- if tooltip %} data-toggle="tooltip" title="{{ tooltip }}"{% endif -%}
+        >
+            {{ label }}
+        </td>
+        <td style="text-align: right; padding:5px">{{ value }}{% if percent %}%{% endif %}</td>
+    </tr>
+{%- endmacro %}
+
+{% macro upload_input(key, label, dropdown=False) %}
+    <div class="input-group mb-3">
+        <div class="input-group-prepend">
+            <label class="input-group-text upload-label" for="{{ key }}">
+                {{ label }}
+            </label>
+        </div>
+
+        {{ caller() }}
+
+        {% if dropdown %}
+            <div class="input-group-append">
+                <button type="button" id="{{ key }}-button" class="btn btn-input-group-upload"
+                        tabindex="-1" {% if key == "device_name" %}disabled{% endif %}>
+                    <i class="fas fa-caret-down click-through"></i>
+                </button>
+            </div>
+        {% endif %}
+    </div>
+{%- endmacro %}
+
+{% macro fw_detail_tabular_field(firmware) %}
+    <li class="list-group-item p-0 li-hover bg-light">
+        <div class="clickable p-2" onclick="location.href='/analysis/{{ firmware.uid }}'">
+            <a href='/analysis/{{ firmware.uid }}'>
+                <div class="d-flex justify-content-between align-items-center hid">
+                    {{ firmware.hid }}
+                    <span>{{ firmware.tags | render_fw_tags(size=11) | safe }}</span>
+                </div>
+            </a>
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="footnote text-muted">
+                    {{ firmware.submission_date | nice_unix_time | safe }},
+                    {{ firmware.size | number_format }}
+                </span>
+                <a href="/download/{{ firmware.uid }}" class="pull-right"><i class="fas fa-download"></i></a>
+            </div>
+        </div>
+        {{ caller() }}
+    </li>
+{% endmacro %}
+
+{% macro expandable_element(title, label, style="primary") %}
+    <div class="card border-{{ style }}">
+        <div class="card-header bg-{{ style }} text-white p-0" data-toggle="collapse"
+             data-target="#{{ label }}" aria-expanded="false"
+             style="cursor: pointer;">
+            <span class="btn btn-sm btn-{{ style }} border-0 w-100 shadow-none">
+                <i class="fas fa-list-ul"></i>
+                {{ title }}
+                <i class="fas fa-caret-down caret-icon"></i>
+            </span>
+        </div>
+        <div id="{{ label }}" class="collapse">
+            {{ caller() }}
+        </div>
+    </div>
+{%- endmacro %}
+
+{% macro link_to_preview(firmware, offset, plugin, root_uid) %}
+    <a href="/analysis/{{ firmware.uid }}/{{ plugin }}/ro/{{ root_uid }}?load_preview={{ offset }}">
+        {{ offset | hex }}
+    </a>
+{%- endmacro %}

@@ -1,0 +1,27 @@
+{% extends "analysis_plugins/general_information.html" %}
+
+{% block analysis_result_details %}
+
+{% for vuln in analysis_result.vulnerabilities %}
+    <tr>
+        <td class="table-{{ vuln.score | vulnerability_class }}">{{ vuln.name }}</td>
+        <td class="d-flex justify-content-between align-items-center">
+            {{ vuln.description }}
+            {% if vuln.link %}
+                <a href="{{ vuln.link }}" target="_blank"><span class="fas fa-link"></span></a>
+            {% endif %}
+            {% if vuln.additional_data %}
+                <table class="table table-bordered mb-0 pb-0">
+                    {% for inner_key, value in vuln.additional_data.items() %}
+                        <tr>
+                            <td>{{ inner_key }}</td>
+                            <td>{{ value }}</td>
+                        </tr>
+                    {% endfor %}
+                </table>
+            {% endif %}
+        </td>
+    </tr>
+{% endfor %}
+
+{% endblock %}

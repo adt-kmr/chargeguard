@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% set active_page = "Info" %}
+
+{% block head %}
+    <script type="text/javascript" src="{{ url_for('static', filename='js/system_health.js') }}"></script>
+    <script>
+        setInterval(updateSystemHealth, 5000);
+        updateSystemHealth();
+    </script>
+    <style>
+        .progress {
+            color: white;
+            background-color: darkgray;
+        }
+        .status-td {
+            min-width: 50px;
+            text-align: center;
+        }
+        .status-span {
+            display: inline-flex;
+            align-items: center;
+        }
+        .status-fa {
+            margin-right: 5px;
+        }
+        .status-th {
+            text-align: center;
+            word-break: break-all;
+            overflow-wrap: break-word;
+        }
+    </style>
+{% endblock %}
+
+{% macro icon_tooltip_desk(icon, tooltip, icon_class=None) %}
+    {% set icon_class = icon_class if icon_class else 'fas' %}
+    <td class="align-middle text-center" style="width: 30px;" data-toggle="tooltip" data-placement="bottom" title="{{ tooltip }}">
+        <i class="{{ icon_class }} fa-{{ icon }}"></i>
+    </td>
+{% endmacro %}
+
+{% macro component_card(component) %}
+    <div class="card m-2" style="width: 430px;">
+        <div class="card-body">
+            <h5 class="card-title">{{ component }} status</h5>
+            <h6 class="card-subtitle mb-2" id="{{ component }}-status">
+                unknown
+            </h6>
+            <table class="table table-borderless table-sm mb-0">
+                <tr>
+                    {{ icon_tooltip_desk('linux', 'Operating system', icon_class='fab') }}
+                    <td id="{{ component }}-os"></td>
+                    {{ icon_tooltip_desk('python', 'Python version', icon_class='fab') }}
+                    <td id="{{ component }}-python"></td>
+                    {{ icon_tooltip_desk('code-branch', 'FACT version') }}
+                    <td id="{{ component }}-version"></td>
+                </tr>
+                <tr>
+                    {{ icon_tooltip_desk('microchip', 'CPU status') }}
+                    <td colspan="5" id="{{ component }}-cpu"></td>
+                </tr>
+                <tr>
+                    {{ icon_tooltip_desk('memory', 'Memory status') }}
+                    <td colspan="5" class="align-middle">
+                        <div class="progress position-relative" style="height: 20px;" id="{{ component }}-memory"></div>
+                    </td>
+                </tr>
+                <tr>
+                    {{ icon_tooltip_desk('hdd', 'Disk status') }}
+                    <td colspan="5" class="align-middle">
+                        <div class="progress position-relative" style="height: 20px;" id="{{ component }}-disk"></div>
+                    </td>
+                </tr>
+                {% if component == "backend" %}
+                    <tr>
+                        {{ icon_tooltip_desk('box-open', 'Pending items for extraction') }}
+                        <td colspan="4" id="backend-unpacking-queue"></td>
+                        <td class="text-danger text-center" id="backend-unpacking-throttle-indicator" data-toggle="tooltip" data-placement="bottom"
+                            title="Pause indicates that unpacking is halted until analysis queue is under throttle limit again."></td>
+                    </tr>
+                    <tr>
+                        {{ icon_tooltip_desk('microscope', 'Pending items for analysis') }}
+                        <td colspan="5" id="backend-analysis-queue"></td>
+                    </tr>
+                {% endif %}
+            </table>
+       </div>
+    </div>
+{% endmacro %}
+
+{% block body %}
+
+<div class="row justify-content-center mt-4">
+    {% for component in ["frontend", "backend" ,"database"] %}
+        {{ component_card(component) }}
+    {% endfor %}
+</div>
+
+<div class="row justify-content-center mt-4">
+    {# analysis plugin status #}
+    <div class="col-md-12 col-lg-auto">
+        <div class="card m-2 w-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center w-100">
+                    <h5 class="card-title">Analysis Plugin Status</h5>
+                </div>
+                <table class="table table-sm card-table m-0">
+                    <tr>
+                        <th>Plugin</th>
+                        <th class="status-th">Threads</th>
+                        <th class="status-th">Active</th>
+                        <th class="status-th">In Queue</th>
+                        <th class="status-th">Out Queue</th>
+                        <th class="status-th">Stats</th>
+                    </tr>
+                    {% for plugin_name, plugin_data in analysis_plugin_info.items() %}
+                        {% set description, _, __, version, dependencies, blacklist, whitelist, threads = plugin_data %}
+                        <tr>
+                            <td style="word-break: break-all; overflow-wrap: break-word;">{{ plugin_name }}</td>
+
+                            <td class="status-td" data-toggle="tooltip" data-placement="bottom" title="number of concurrent workers">
+                                <span class="status-span">
+                                    <i class="fas fa-align-justify text-muted status-fa"></i>
+                                    <div>{{ threads }}</div>
+                                </span>
+                            </td>
+
+                            <td class="status-td" data-toggle="tooltip" data-placement="bottom" title="currently processing">
+                                <span class="status-span">
+                                    <i class="fas fa-cog text-muted status-fa" id="{{ plugin_name }}-active-indicator"></i>
+                                    <div id="{{ plugin_name }}-active"></div>
+                                </span>
+                            </td>
+
+                            <td class="status-td" data-toggle="tooltip" data-placement="bottom" title="pending tasks">
+                                <span class="status-span">
+                                    <i class="fas fa-sign-in-alt text-muted status-fa" id="{{ plugin_name }}-queue-indicator"></i>
+                                    <div id="{{ plugin_name }}-queue"></div>
+                                </span>
+                            </td>
+
+                            <td class="status-td" data-toggle="tooltip" data-placement="bottom" title="finished tasks ready for collection">
+                                <span class="status-span">
+                                    <i class="fas fa-sign-out-alt text-muted status-fa" id="{{ plugin_name }}-out-queue-indicator"></i>
+                                    <div id="{{ plugin_name }}-out-queue"></div>
+                                </span>
+                            </td>
+
+                            <td class="status-td" data-toggle="tooltip" data-placement="bottom" title="show runtime stats" data-html="true" data-sanitize="false" id="{{ plugin_name }}-stats">
+                                <span class="fas fa-circle-info clickable" style="color: var(--link-color-hover-light); cursor: help;"
+                                      data-toggle="collapse" data-target="#{{ plugin_name }}-stats-collapse">
+                                </span>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-12 col-lg-auto">
+        <!-- Current Analyses -->
+        <div class="row">
+            <div class="card m-2 current-analyses-card w-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center w-100" style="min-width: 420px;">
+                        <h5 class="card-title">Currently analyzed firmware</h5>
+                    </div>
+                    <div id="current-analyses">
+                        <!-- Filled with JavaScript -->
+                    </div>
+                    <div class="form-check mt-2 mb-0">
+                        <input class="form-check-input" type="checkbox" value="" id="ca-show-details">
+                        <label class="form-check-label" for="ca-show-details">Show details</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

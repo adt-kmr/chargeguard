@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% set active_page = "Database" %}
+
+
+{% macro missing_analyses_block(group, title, left_column, right_column) %}
+<div class="row justify-content-center">
+    <div class="col-xl-8 col-lg-12">
+        {% if group.count %}
+            <h3 class="mt-4">{{ title }}: {{ group.count | nice_number }}</h3>
+            <h6>took {{ group.duration }} to generate</h6>
+            <table class="table table-bordered">
+                <tr class="table-success">
+                    <th style="width: 50%">{{ left_column }}</th>
+                    <th>{{ right_column }}</th>
+                </tr>
+                {{ caller() }}
+            </table>
+        {% else %}
+            <h3 class="mt-4">{{ title }}: No entries found <span class="fas fa-check"></span></h3>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+
+
+{% block head %}
+    <style>
+        table a {
+            word-break: break-all;
+        }
+    </style>
+{% endblock %}
+
+
+{% block body %}
+
+{# missing_analyses #}
+{% call missing_analyses_block(missing_analyses, "Missing Analyses", "Parent Firmware", "Files Missing Analyses") %}
+                {% for parent_uid, uid_list in missing_analyses.tuples | sort -%}
+                <tr>
+                    <td>
+                        <a href="/analysis/{{ parent_uid }}">{{ parent_uid | replace_uid_with_hid }}</a>
+                    </td>
+                    <td>
+                        {{ uid_list | nice_uid_list(filename_only=True) | safe }}
+                    </td>
+                </tr>
+                {%- endfor %}
+{% endcall %}
+
+{# failed_analyses #}
+{% call missing_analyses_block(failed_analyses, "Failed Analyses", "Analysis Plugin", "Files with Failed Analyses") %}
+                {% for plugin, uid_list in failed_analyses.tuples | sort -%}
+                <tr>
+                    <td>
+                        {{ plugin | replace_underscore }}
+                    </td>
+                    <td>
+                        {{ uid_list | nice_uid_list | safe }}
+                    </td>
+                </tr>
+                {%- endfor %}
+{% endcall %}
+
+{% endblock %}

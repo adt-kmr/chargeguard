@@ -1,0 +1,137 @@
+[tool.pytest.ini_options]
+addopts = "-v"
+testpaths = [
+    "src/test",
+    "src/plugins/**/test",
+]
+markers = [
+    "AnalysisPluginTestConfig: Configure the analysis_plugin fixture",
+    "SchedulerTestConfig: Configure the analysis_scheduler, comparison_scheduler and unpacking_scheduler",
+    "WebInterfaceUnitTestConfig: Configure the web_interface fixture",
+    "backend_config_overwrite: Overwrite defaults for the testing backend config",
+    "common_config_overwrite: Overwrite defaults for the testing common config",
+    "frontend_config_overwrite: Overwrite defaults for the testing frontend config",
+]
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".ruff_cache",
+    ".venv",
+    "bin",
+    "node_modules",
+    "docker",  # ingore plugins/*/*/docker/scripts/* jython ghidra scripts
+    "venv",
+    "data",  # ignore plugins/*/*/test/data/* test data folders (containing test files)
+    "src/plugins/analysis/input_vectors/internal",  # FixMe: runs inside a bionic docker container with python 3.6
+]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    # see https://docs.astral.sh/ruff/rules
+    "ERA",  # eradicate
+    "YTT",  # flake8-2020
+    "ANN",  # flake8-annotations
+    "S",  # flake8-bandit (security)
+    "B",  # flake8-bugbear
+    "A",  # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "EXE",  # flake8-executable
+    "FIX",  # flake8-fixme
+    "ISC",  # flake8-implicit-str-concat
+    "PIE",  # flake8-pie
+    "T20",  # flake8-print
+    "PT",  # flake8-pytest-style
+    "Q",  # flake8-quotes
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "TC",  # flake8-type-checking
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "I",  # isort
+    "C90",  # mccabe
+    "N",  # pep8-naming
+    "PERF",  # Perflint
+    "E",  # pycodestyle Error
+    "W",  # pycodestyle Warning
+    "F",  # Pyflakes
+    "PLC",  # Pylint
+    "PLE",  # Pylint Error
+    "PLR",  # Pylint Refactor
+    "PLW",  # Pylint Warning
+    "UP",  # pyupgrade
+    "FURB",  # refurb (FURB code optimzations)
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "A003",
+    "ANN002",
+    "ANN003",
+    "ANN204",  # type annotation for special methods (e.g. __init__)
+    "C420",  # dict.fromkeys instead of dict comprehension
+    "PERF203",
+    "PERF401",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "RUF015",
+    "FIX001",  # line contains fixme
+    "FIX004",  # line contains hack
+    # rules may cause conflicts when used with the formatter:
+    "ISC001",
+    "Q001",
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"test*.py" = ["ARG002", "PLR2004", "ANN", "S101"]
+"conftest.py" = ["ARG001", "ARG002", "ANN", "S101"]
+"src/test/**.py" = ["ARG001", "ARG002", "ANN", "S101"]
+# ignore prints in CLI scripts
+"migrate_db_to_postgresql.py" = ["T201"]
+"manage_users.py" = ["T201"]
+"migrate_database.py" = ["T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["analysis", "compare", "helperFunctions", "install", "intercom", "objects", "plugins", "scheduler",
+    "statistic", "storage", "test", "unpacker", "version", "web_interface", "config"]
+known-third-party = ["docker"]
+
+[tool.ruff.lint.pylint]
+max-args=7
+max-public-methods = 40
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = "single"
+multiline-quotes = "single"
+docstring-quotes = "double"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.coverage.run]
+omit = [
+    # ignore install scripts
+    "src/install.py",
+    "src/install/*",
+    # ignore alembic migration scripts
+    "src/storage/migration/**",
+    # ignore files only run inside docker
+    "src/plugins/analysis/*/docker/**",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    # exclude type checking blocks which are not executed during runtime
+    "if TYPE_CHECKING:",
+    # also don't complain about abstract methods (as they're also not run)
+    "@(abc\\.)?abstractmethod",
+]
