@@ -1,0 +1,29 @@
+;; lpc55s69_flash_factory_bin.cmm
+
+; wolfBoot root: three levels above this script
+&basedir=OS.PPD()+"\..\..\.."
+
+RESet
+SYStem.RESet
+SYStem.CPU LPC55S69JBD100-CPU0
+SYStem.CONFIG.DEBUGPORTTYPE SWD
+IF COMBIPROBE()||UTRACE()
+(
+  SYStem.CONFIG.CONNECTOR MIPI20T
+)
+SYStem.Option DUALPORT ON
+SYStem.MemAccess DAP
+SYStem.JtagClock 10MHz
+ITM.OFF
+Trace.DISable
+
+SYStem.Up
+
+DO ~~/demo/arm/flash/lpc55xx PREPAREONLY
+
+flash.erase all
+FLASH.ReProgram ALL
+Data.LOAD.Binary "&basedir\factory.bin" 0
+FLASH.ReProgram OFF
+
+ENDDO

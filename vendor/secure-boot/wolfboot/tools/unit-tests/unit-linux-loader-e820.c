@@ -1,0 +1,117 @@
+/* unit-linux-loader-e820.c
+ *
+ * Regression test for F-4711: e820_add_entry_cb() must not write past the
+ * fixed-size boot_params->e820_table[E820_MAX_ENTRIES_ZEROPAGE] when the FSP
+ * HOB list supplies more resource descriptors than the table can hold.
+ *
+ * Built for x86 32bit (the only target supported by linux_loader.c), without
+ * the check framework, since 32bit libcheck is not generally available.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#include "x86/hob.h"
+#include "x86/linux_loader.h"
+
+#include "../../src/x86/hob.c"
+#include "../../src/x86/linux_loader.c"
+
+/* linux_loader.c references the wolfBoot extent symbols from the linker
+ * script; define a stand-in so this test links. _end_wb is provided by the
+ * Makefile via --defsym. */
+uint8_t _start_wolfboot[0x100000];
+
+/* More descriptors than the table can hold, to force the overflow path. */
+#define N_ENTRIES 200
+#define CANARY_LEN 2048
+#define CANARY_BYTE 0xAA
+
+/* boot_params followed by a canary region: any write past e820_table runs
+ * through the rest of boot_params and into the canary. */
+static struct {
+    struct boot_params bp;
+    uint8_t canary[CANARY_LEN];
+} obj;
+
+static uint8_t hoblist[(N_ENTRIES + 1) *
+                       sizeof(struct efi_hob_resource_descriptor)];
+
+int main(void)
+{
+    int i;
+    uint8_t *p = hoblist;
+    struct efi_hob_resource_descriptor *rd;
+    struct efi_hob_generic_header *end;
+
+    for (i = 0; i < N_ENTRIES; i++) {
+        rd = (struct efi_hob_resource_descriptor *)p;
+        memset(rd, 0, sizeof(*rd));
+        rd->header.hob_type = EFI_HOB_TYPE_RESOURCE_DESCRIPTOR;
+        rd->header.hob_length = sizeof(struct efi_hob_resource_descriptor);
+        rd->resource_type = EFI_RESOURCE_SYSTEM_MEMORY;
+        rd->physical_start = 0x4141414141414141ULL;
+        rd->resource_length = 0x4242424242424242ULL;
+        p += sizeof(struct efi_hob_resource_descriptor);
+    }
+    end = (struct efi_hob_generic_header *)p;
+    end->hob_type = EFI_HOB_TYPE_END_OF_HOB_LIST;
+    end->hob_length = sizeof(struct efi_hob_generic_header);
+
+    memset(&obj, 0, sizeof(obj));
+    memset(obj.canary, CANARY_BYTE, CANARY_LEN);
+
+    (void)memory_map_from_hoblist(&obj.bp, (struct efi_hob *)hoblist);
+
+    printf("e820_entries=%u\n", obj.bp.e820_entries);
+
+    for (i = 0; i < CANARY_LEN; i++) {
+        if (obj.canary[i] != CANARY_BYTE) {
+            printf("FAIL: e820_table overflow corrupted memory at +%d\n", i);
+            return 1;
+        }
+    }
+    if (obj.bp.e820_entries > E820_MAX_ENTRIES_ZEROPAGE) {
+        printf("FAIL: e820_entries=%u exceeds max %d\n",
+               obj.bp.e820_entries, E820_MAX_ENTRIES_ZEROPAGE);
+        return 1;
+    }
+
+    /* Only RAM and reserved memory are listed: MMIO and I/O port ranges
+     * must not appear as reserved memory. */
+    {
+        static const uint32_t types[] = {
+            EFI_RESOURCE_SYSTEM_MEMORY, EFI_RESOURCE_MEMORY_MAPPED_IO,
+            EFI_RESOURCE_IO, EFI_RESOURCE_MEMORY_MAPPED_IO_PORT,
+            EFI_RESOURCE_MEMORY_RESERVED, EFI_RESOURCE_IO_RESERVED
+        };
+        unsigned int n = sizeof(types) / sizeof(types[0]);
+
+        p = hoblist;
+        for (i = 0; i < (int)n; i++) {
+            rd = (struct efi_hob_resource_descriptor *)p;
+            rd->resource_type = types[i];
+            rd->physical_start = 0x1000ULL * (i + 1);
+            rd->resource_length = 0x1000;
+            p += sizeof(struct efi_hob_resource_descriptor);
+        }
+        end = (struct efi_hob_generic_header *)p;
+        end->hob_type = EFI_HOB_TYPE_END_OF_HOB_LIST;
+        end->hob_length = sizeof(struct efi_hob_generic_header);
+        memset(&obj.bp, 0, sizeof(obj.bp));
+        if (memory_map_from_hoblist(&obj.bp, (struct efi_hob *)hoblist) != 0 ||
+            obj.bp.e820_entries != 2 ||
+            obj.bp.e820_table[0].addr != 0x1000 ||
+            obj.bp.e820_table[0].type != E820_TYPE_RAM ||
+            obj.bp.e820_table[1].addr != 0x5000 ||
+            obj.bp.e820_table[1].type != E820_TYPE_RESERVED) {
+            printf("FAIL: MMIO or I/O ranges listed in the e820 map\n");
+            return 1;
+        }
+    }
+
+    printf("PASS\n");
+    return 0;
+}

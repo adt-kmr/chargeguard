@@ -1,0 +1,2912 @@
+LDFLAGS=-lcheck -lm -pthread
+
+# The gzip sink tests build their fixtures with a chosen LZ77 window, which
+# gzip(1) cannot produce, so they need zlib. Optional: without the headers
+# those suites are skipped and the rest still build, matching how
+# tools/keytools treats the same dependency.
+HAVE_ZLIB := $(shell $(CC) -E -include zlib.h -x c /dev/null >/dev/null 2>&1 && echo 1)
+ifeq ($(HAVE_ZLIB),1)
+  CFLAGS  += -DHAVE_ZLIB
+  LDFLAGS += -lz
+endif
+
+UNAME_S := $(shell uname -s)
+ifneq ($(UNAME_S),Darwin)
+	LDFLAGS+=-lrt -lsubunit
+endif
+
+# Default library paths (can be overridden)
+WOLFBOOT_LIB_WOLFSSL?=../../lib/wolfssl
+WOLFBOOT_LIB_WOLFPKCS11?=../../lib/wolfPKCS11
+WOLFBOOT_LIB_WOLFPSA?=../../lib/wolfPSA
+WOLFBOOT_LIB_WOLFTPM?=../../lib/wolfTPM
+WOLFBOOT_LIB_WOLFHSM?=../../lib/wolfHSM
+WOLFBOOT_LIB_WOLFCOSE?=../../lib/wolfCOSE
+
+ifeq ($(wildcard $(WOLFBOOT_LIB_WOLFPSA)),)
+WOLFBOOT_LIB_WOLFPSA=../../../external-libs/wolfPSA
+endif
+ifeq ($(wildcard $(WOLFBOOT_LIB_WOLFTPM)),)
+WOLFBOOT_LIB_WOLFTPM=../../../external-libs/wolfTPM
+endif
+ifeq ($(wildcard $(WOLFBOOT_LIB_WOLFHSM)),)
+WOLFBOOT_LIB_WOLFHSM=../../../external-libs/wolfHSM
+endif
+ifeq ($(wildcard $(WOLFBOOT_LIB_WOLFCOSE)),)
+WOLFBOOT_LIB_WOLFCOSE=../../../external-libs/wolfCOSE
+endif
+
+# Convert to absolute paths for standalone usage
+WOLFBOOT_LIB_WOLFSSL:=$(abspath $(WOLFBOOT_LIB_WOLFSSL))
+WOLFBOOT_LIB_WOLFPKCS11:=$(abspath $(WOLFBOOT_LIB_WOLFPKCS11))
+WOLFBOOT_LIB_WOLFPSA:=$(abspath $(WOLFBOOT_LIB_WOLFPSA))
+WOLFBOOT_LIB_WOLFTPM:=$(abspath $(WOLFBOOT_LIB_WOLFTPM))
+WOLFBOOT_LIB_WOLFHSM:=$(abspath $(WOLFBOOT_LIB_WOLFHSM))
+WOLFBOOT_LIB_WOLFCOSE:=$(abspath $(WOLFBOOT_LIB_WOLFCOSE))
+
+CFLAGS=-I. -I../../src -I../../include -I$(WOLFBOOT_LIB_WOLFSSL)
+CFLAGS+=-g -ggdb
+CFLAGS+=-fprofile-arcs
+CFLAGS+=-ftest-coverage
+CFLAGS+=--coverage
+# The tests do not use threads: plain counters, even with -pthread
+CFLAGS+=-fprofile-update=single
+CFLAGS+=-DUNIT_TEST_COVERAGE
+CFLAGS+=-DUNIT_TEST -DWOLFSSL_USER_SETTINGS
+# Pin the standard: GCC 14+ defaults to gnu23, where glibc string.h defines
+# memchr/memcpy as _Generic macros that clash with wolfBoot's own declarations
+# in tests that #include a .c file. gnu17 matches the CI toolchain default.
+CFLAGS+=-std=gnu17
+LDFLAGS+=-fprofile-arcs
+LDFLAGS+=-ftest-coverage
+
+ASAN?=0
+ifeq ($(ASAN),1)
+	CFLAGS+=-fsanitize=address -fno-omit-frame-pointer -O1
+	LDFLAGS+=-fsanitize=address
+endif
+
+
+
+TESTS:=unit-parser unit-parser-large-header unit-fdt unit-extflash unit-string \
+       unit-spi-flash unit-aes128 \
+       unit-uart-flash \
+       unit-aes256 unit-chacha20 unit-pci unit-pci-4gib unit-mock-state \
+       unit-sectorflags unit-max-space \
+       unit-image unit-image-hybrid unit-image-rsa unit-nvm unit-nvm-flagshome unit-enc-nvm \
+       unit-enc-key unit-enc-key-aes256 unit-enc-key-straddle \
+       unit-enc-key-sector unit-enc-key-flagshome \
+       unit-enc-nvm-flagshome unit-delta unit-gzip unit-update-flash unit-update-flash-delta \
+       unit-update-flash-db \
+       unit-update-flash-hook \
+       unit-update-flash-flagshome unit-update-flash-invert \
+       unit-update-flash-int-invert \
+       unit-update-flash-smallsector \
+       unit-update-flash-self-update \
+       unit-update-flash-self-update-ecc \
+       unit-update-flash-self-update-monolithic \
+       unit-nsc-update \
+       unit-update-flash-enc unit-update-flash-enc-full unit-update-flash-enc-intswap unit-update-ram unit-update-ram-fit unit-update-ram-uboot unit-update-ram-enc unit-update-ram-enc-nopart unit-update-ram-nofixed unit-update-ram-nofixed-noramboot unit-update-ram-noramboot unit-update-ram-custom-trailer unit-compressed-tlv unit-custom-trailer-nopart unit-update-flash-hwswap unit-update-flash-custom-trailer unit-pkcs11_store unit-psa_store unit-wolfhsm_flash_hal unit-disk \
+       unit-update-disk unit-update-disk-confirm unit-update-disk-golden unit-update-disk-failover unit-update-disk-golden-enckey unit-update-disk-fsp unit-update-disk-oob unit-update-disk-fit unit-update-disk-fit-ramdisk unit-multiboot unit-boot-x86-fsp unit-loader-tpm-init unit-qspi-flash unit-fwtpm-stub unit-tpm-rsa-exp \
+       unit-image-nopart unit-image-sha384 unit-image-sha3-384 unit-image-dts \
+       unit-image-dts-sha384 unit-image-dts-sha3-384 unit-store-sbrk \
+       unit-tpm-blob unit-policy-create unit-policy-sign unit-rot-auth unit-sdhci-response-bits \
+       unit-sdhci-disk-unaligned unit-sdhci-dma-error unit-cm4-sdhci unit-cm4-rauc-slot \
+       unit-imx95-ahab \
+       unit-sign-encrypted-output \
+       unit-sign-hybrid-keyload \
+       unit-sign-header-failure \
+       unit-keygen-xmss-params
+TESTS+=unit-tpm-check-rot-auth
+TESTS+=unit-tpm-api-names
+TESTS+=unit-tpm-nsc-cert
+TESTS+=unit-tpm-advio-zeroize
+TESTS+=unit-tpm-i2c-zeroize
+TESTS+=unit-tpm-mfgid-eh-zeroize
+TESTS+=unit-pkcs11-nsc-zeroize
+TESTS+=unit-pkcs11-pin-zeroize
+TESTS+=unit-ubootenv
+TESTS+=unit-diagnostics
+TESTS+=unit-psoc-c3-divider
+TESTS+=unit-psoc-e8-tz
+TESTS+=unit-psoc-e8-flash
+TESTS+=unit-diagnostics-256
+TESTS+=unit-fit-gzip unit-fit-nogzip
+TESTS+=unit-gzip-small unit-gzip-bits32 unit-gzip-root7 unit-fit-gzip-small
+ifeq ($(HAVE_ZLIB),1)
+TESTS+=unit-gzip-sink unit-gzip-sink-small unit-gzip-sink-bits32 \
+       unit-gzip-sink-root7
+TESTS+=unit-compressed-install unit-compressed-install-ecc
+endif
+TESTS+=unit-fit-fpga
+TESTS+=unit-mpusize
+TESTS+=unit-flash-erase-h7
+TESTS+=unit-flash-erase-h7s
+TESTS+=unit-flash-erase-wb
+TESTS+=unit-flash-erase-l0
+TESTS+=unit-flash-erase-g0
+TESTS+=unit-flash-erase-c0
+TESTS+=unit-flash-erase-u3
+TESTS+=unit-flash-erase-kinetis
+TESTS+=unit-flash-m2354
+TESTS+=unit-otp-keystore
+TESTS+=unit-snvm-keystore
+TESTS+=unit-snvm-kek
+TESTS+=unit-snvm-kek-golden
+TESTS+=unit-otp-keystore-gen-zeroize
+TESTS+=unit-x86-paging-oob
+TESTS+=unit-ahci-unlock-panic
+TESTS+=unit-ata-security-passphrase-zeroize
+TESTS+=unit-ata-sector-io
+TESTS+=unit-fwtpm-nv-oob
+TESTS+=unit-elf-bss-guard
+TESTS+=unit-elf-entry-inplace
+TESTS+=unit-elf-mmu-fail
+TESTS+=unit-nrf54l-uart-write
+TESTS+=unit-nrf54l-flash
+TESTS+=unit-nrf54lm20-flash
+TESTS+=unit-x86-uart
+TESTS+=unit-stm32h7-flash-write
+TESTS+=unit-stm32u3-flash-write
+TESTS+=unit-elf-phentsize
+TESTS+=unit-image-elf-scatter
+TESTS+=unit-arm-tee-psa-ipc
+TESTS+=unit-dice-token-size
+TESTS+=unit-dice-token-nosign
+TESTS+=unit-va416x0-fram
+TESTS+=unit-flash-write-cc26x2
+TESTS+=unit-p1021-fcm-bytes
+TESTS+=unit-ls1028a-xspi-write
+TESTS+=unit-zynq-erase-loop
+TESTS+=unit-zynq-ext-write
+TESTS+=unit-ct-compare
+TESTS+=unit-zynqmp-bbram-crc
+TESTS+=unit-zynqmp-efuse-guards
+TESTS+=unit-zynqmp-efuse-burn
+TESTS+=unit-zynqmp-puf
+TESTS+=unit-zynqmp-puf-nofsbl
+TESTS+=unit-versal-qspi-dma
+TESTS+=unit-imx8qm-usdhc-shim
+TESTS+=unit-imx8qm-flexspi-write
+TESTS+=unit-imx95-ele
+TESTS+=unit-imx95-disk
+TESTS+=unit-versal-ext-write
+TESTS+=unit-versal-wdt
+TESTS+=unit-versal-uart-rx
+TESTS+=unit-raspi3-uart-rx
+TESTS+=unit-mpfs-wdt
+TESTS+=unit-t10xx-qe-firmware
+TESTS+=unit-t10xx-flash-status
+TESTS+=unit-p1021-erase-advance
+TESTS+=unit-p1021-read-badblock
+TESTS+=unit-kontron-tgl-spi
+TESTS+=unit-fsp-nvs
+TESTS+=unit-fsp-nvs-save
+TESTS+=unit-tgl-spi-hwseq
+TESTS+=unit-x86-apic-ids
+TESTS+=unit-x86-acpi
+TESTS+=unit-boot-x86-fsp-measure
+TESTS+=unit-boot-x86-fsp-payload
+TESTS+=unit-nrf5340-flash-protect
+TESTS+=unit-keygen-keystore
+TESTS+=unit-samr21-erase-advance
+TESTS+=unit-samr21-flash-protect
+TESTS+=unit-hifive1-flash-write
+TESTS+=unit-hifive1-hfrosccfg
+TESTS+=unit-rp2350-flash-write
+TESTS+=unit-fwtpm-rsp-overrun
+TESTS+=unit-fwtpm-cmd-toctou
+TESTS+=unit-fdt-memrsv-wrap
+TESTS+=unit-fdt-addr32
+TESTS+=unit-ns16550
+TESTS+=unit-zynq-dma-range
+TESTS+=unit-pkcs11_store-stalecache
+TESTS+=unit-aurix-erased-fill
+TESTS+=unit-aurix-erased-fill-invert
+TESTS+=unit-t2080-fman-loader
+TESTS+=unit-ecc-raw-der
+TESTS+=unit-stm32g4-write
+TESTS+=unit-stm32g0-write
+TESTS+=unit-stm32l4-write
+TESTS+=unit-stm32wb-write
+TESTS+=unit-stm32l5-write
+TESTS+=unit-stm32u5-write
+TESTS+=unit-stm32c0-write
+TESTS+=unit-stm32h7s-write
+TESTS+=unit-nvm-cache-scrub
+TESTS+=unit-nvm-journal unit-nvm-journal-ecc
+TESTS+=unit-nvm-journal-dual unit-nvm-journal-dual-ecc
+TESTS+=unit-elf-store-ecc unit-elf-store-ecc-invert unit-elf-store-ecc-unit1
+TESTS+=unit-elf-store-ecc-preserve unit-elf-store-ecc-preserve-invert
+TESTS+=unit-elf-store-ecc-preserve-unit1 unit-elf-store-ecc-preserve-writeonce
+TESTS+=unit-flash-is-erased unit-flash-is-erased-invert
+TESTS+=unit-update-trigger-scrub
+TESTS+=unit-sdhci-uhs-recover
+TESTS+=unit-sdhci-cmd-inhibit
+TESTS+=unit-sdhci-cmd-inhibit-uhs
+TESTS+=unit-sdhci-wait-busy
+TESTS+=unit-sdhci-acmd41-timeout
+TESTS+=unit-ti-hercules-write
+TESTS+=unit-ti-hercules-erase
+TESTS+=unit-p1021-qe-firmware
+TESTS+=unit-t10xx-dts-memac
+TESTS+=unit-fs-probe
+TESTS+=unit-fs-malicious
+TESTS+=unit-update-disk-fs unit-update-disk-fs-enc
+
+# The filesystem interop tests build their fixtures with the host's real
+# mkfs tools, so they are only added when those tools exist. The hostile
+# input coverage lives in unit-fs-malicious, which needs no tools and is
+# therefore unconditional.
+HAVE_MKFS_VFAT := $(shell command -v mkfs.vfat 2>/dev/null)
+HAVE_MCOPY     := $(shell command -v mcopy 2>/dev/null)
+HAVE_MKE2FS    := $(shell command -v mke2fs 2>/dev/null)
+ifneq ($(and $(HAVE_MKFS_VFAT),$(HAVE_MCOPY)),)
+TESTS+=unit-fat32
+else
+$(warning Skipping unit-fat32: mkfs.vfat and/or mtools unavailable)
+endif
+ifneq ($(HAVE_MKE2FS),)
+TESTS+=unit-ext4
+else
+$(warning Skipping unit-ext4: mke2fs unavailable)
+endif
+
+# The x86-64 EFI unit test needs the gnu-efi development headers (same
+# dependency as the CMake x86_64_efi target). Probe and only add the test
+# when they are installed, so a default "make" stays portable on hosts
+# without them.
+HAVE_GNU_EFI := $(wildcard /usr/include/efi/efi.h)
+ENABLE_EFI_TESTS ?= $(if $(HAVE_GNU_EFI),1,0)
+ifeq ($(ENABLE_EFI_TESTS),1)
+TESTS+=unit-efi-x86-open-image
+else
+$(info Skipping x86-64 EFI unit test: gnu-efi headers not found (set ENABLE_EFI_TESTS=1 to force))
+endif
+
+# NXP HAL tests build against the real MCUXpresso SDK headers, fetched into
+# MCUXSDK by tools/ci/fetch-mcuxsdk-headers.sh, with only CMSIS mocked.
+MCUXSDK?=
+MCXA_SDK=$(MCUXSDK)/devices/MCX/MCXA/MCXA153
+RW612_SDK=$(MCUXSDK)/devices/Wireless/RW/RW612
+MCXW_SDK=$(MCUXSDK)/devices/MCX/MCXW/MCXW716C
+LPC55S69_SDK=$(MCUXSDK)/devices/LPC/LPC5500/LPC55S69
+ifneq ($(wildcard $(MCXA_SDK)/MCXA153.h),)
+TESTS+=unit-flash-write-mcxa
+else
+$(info Skipping MCXA unit test: set MCUXSDK (see tools/ci/fetch-mcuxsdk-headers.sh))
+endif
+ifneq ($(wildcard $(RW612_SDK)/RW612.h),)
+TESTS+=unit-rw612-flash
+TESTS+=unit-rw612-tz
+TESTS+=unit-rw612-uart
+else
+$(info Skipping RW612 unit tests: set MCUXSDK (see tools/ci/fetch-mcuxsdk-headers.sh))
+endif
+ifneq ($(wildcard $(MCXW_SDK)/MCXW716C.h),)
+TESTS+=unit-mcxw-flash
+TESTS+=unit-mcxw-tz
+else
+$(info Skipping MCX W unit tests: set MCUXSDK (see tools/ci/fetch-mcuxsdk-headers.sh))
+endif
+ifneq ($(wildcard $(LPC55S69_SDK)/LPC55S69_cm33_core0.h),)
+TESTS+=unit-lpc55s69-flash
+TESTS+=unit-lpc55s69-tz
+TESTS+=unit-lpc55s69-uart
+TESTS+=unit-lpc55s69-puf
+else
+$(info Skipping LPC55S69 unit tests: set MCUXSDK (see tools/ci/fetch-mcuxsdk-headers.sh))
+endif
+# PSoC 6 HAL tests build against the real Infineon PDL headers, fetched into
+# PSOC6_LIBS by tools/ci/fetch-psoc6-pdl.sh, with only CMSIS mocked.
+PSOC6_LIBS?=
+ifneq ($(wildcard $(PSOC6_LIBS)/mtb-pdl-cat1/drivers/include/cy_flash.h),)
+TESTS+=unit-psoc6-flash
+TESTS+=unit-psoc6-qspi
+TESTS+=unit-psoc6-boot
+else
+$(info Skipping PSoC 6 unit tests: set PSOC6_LIBS (see tools/ci/fetch-psoc6-pdl.sh))
+endif
+TESTS+=unit-flash-write-nrf52
+TESTS+=unit-nrf5340-uart-crlf
+TESTS+=unit-flash-write-samr21
+TESTS+=unit-flash-write-same51
+TESTS+=unit-imx-rt-cache-align
+TESTS+=unit-xspi-tfd-index
+TESTS+=unit-pic32-pfswap
+TESTS+=unit-secure-handoff
+TESTS+=unit-imx-rt700
+TESTS+=unit-boot-state
+TESTS+=unit-boot-state-halt
+
+# linux_loader.c is x86 32-bit only, so its unit tests need a working 32-bit
+# (multilib) toolchain. Probe whether "gcc -m32" can link, and only add the
+# tests when it can, so a default "make" stays portable on hosts without 32-bit
+# support. Set ENABLE_32BIT_TESTS=1 to force them on (e.g. to fail loudly if the
+# toolchain is unexpectedly missing multilib).
+HAVE_M32 := $(shell printf 'int main(void){return 0;}' | gcc -m32 -x c - -o /dev/null >/dev/null 2>&1 && echo 1 || echo 0)
+ENABLE_32BIT_TESTS ?= $(HAVE_M32)
+ifeq ($(ENABLE_32BIT_TESTS),1)
+TESTS+=unit-linux-loader-e820
+TESTS+=unit-linux-loader-syssize
+TESTS+=unit-linux-loader-initrd
+TESTS+=unit-sama5d3-ext-read
+else
+$(info Skipping 32-bit x86 unit tests (linux-loader, sama5d3-ext-read): 'gcc -m32' unavailable (set ENABLE_32BIT_TESTS=1 to force))
+endif
+
+include unit-sign-encrypted-output.mkfrag
+
+all: $(TESTS)
+
+cov:
+	rm -f unit-sign-encrypted-output-*
+	gcovr -f "^\.\.\/\.\.\/src.*\.c" -r ../.. --verbose \
+		--exclude-directories 'tools/keytools$$' \
+		--gcov-exclude '.*tools/keytools/.*' \
+		--gcov-exclude '.*unit-sign-encrypted-output-.*' \
+		--merge-mode-functions merge-use-line-0 \
+		--html-medium-threshold 60 \
+		--html-high-threshold 80 \
+		--html-details coverage.html
+	firefox coverage.html
+
+run: $(TESTS)
+	for unit in $(TESTS); do \
+		WOLFBOOT_SECTOR_SIZE=0x400 ./$$unit || exit 1; \
+	done
+	./test-secure-handoff-config.sh
+	python3 unit-sign-delta-tlv.py || exit 1
+	python3 unit-sign-delta-cert-inv-off.py || exit 1
+	python3 unit-sign-delta-basehash-cleanup.py || exit 1
+	python3 unit-delta-sector-align.py || exit 1
+	python3 unit-elf-scatter-db-build.py || exit 1
+	python3 unit-image-wolfhsm-client-build.py || exit 1
+	python3 unit-update-flash-diag-build.py || exit 1
+	python3 unit-x86-fsp-stage1auth-build.py || exit 1
+	python3 unit-sign-custom-tlv-le.py || exit 1
+	python3 unit-sign-custom-tlv-large.py || exit 1
+	python3 unit-sign-custom-tlv-pubkey-der.py || exit 1
+	python3 unit-sign-dts.py || exit 1
+	python3 unit-psoc-e8-boot-header.py || exit 1
+
+WOLFCRYPT_SRC:=$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha.c \
+               $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+               $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_int.c \
+               $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_c64.c \
+               $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/random.c \
+               $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c
+
+unit-aes128:CFLAGS+=-DEXT_ENCRYPTED -DENCRYPT_WITH_AES128
+unit-aes256:CFLAGS+=-DEXT_ENCRYPTED -DENCRYPT_WITH_AES256
+unit-chacha20:CFLAGS+=-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA
+unit-parser:CFLAGS+=-DNVM_FLASH_WRITEONCE
+unit-parser-large-header:CFLAGS+=-DNVM_FLASH_WRITEONCE
+unit-fdt:CFLAGS+=-DWOLFBOOT_FDT
+unit-nvm:CFLAGS+=-DNVM_FLASH_WRITEONCE -DMOCK_PARTITIONS
+unit-nvm-flagshome:CFLAGS+=-DNVM_FLASH_WRITEONCE -DMOCK_PARTITIONS -DFLAGS_HOME
+unit-flash-is-erased:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH
+unit-flash-is-erased-invert:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH \
+	-DWOLFBOOT_FLAGS_INVERT=1
+# Journal tests use 4 KB sectors, because the log must hold a full-partition
+# update
+unit-nvm-journal:CFLAGS+=-DNVM_FLASH_JOURNAL -DMOCK_PARTITIONS \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DIMAGE_HEADER_SIZE=256
+unit-nvm-journal-ecc:CFLAGS+=-DNVM_FLASH_JOURNAL -DNVM_FLASH_ECC -DMOCK_PARTITIONS \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DIMAGE_HEADER_SIZE=256 \
+	-DWOLFBOOT_FLASH_WRITE_UNIT=32 -DWOLFBOOT_FLAGS_INVERT=1 \
+	-DEXT_FLASH -DPART_BOOT_EXT -DPART_UPDATE_EXT
+unit-nvm-journal-dual:CFLAGS+=-DNVM_FLASH_JOURNAL -DNVM_FLASH_JOURNAL_DUAL \
+	-DMOCK_PARTITIONS -DWOLFBOOT_SECTOR_SIZE=0x1000 -DIMAGE_HEADER_SIZE=256
+unit-nvm-journal-dual-ecc:CFLAGS+=-DNVM_FLASH_JOURNAL -DNVM_FLASH_JOURNAL_DUAL \
+	-DNVM_FLASH_ECC -DMOCK_PARTITIONS \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DIMAGE_HEADER_SIZE=256 \
+	-DWOLFBOOT_FLASH_WRITE_UNIT=32 -DWOLFBOOT_FLAGS_INVERT=1 \
+	-DEXT_FLASH -DPART_BOOT_EXT -DPART_UPDATE_EXT
+unit-diagnostics:CFLAGS+=-DMOCK_PARTITIONS
+unit-diagnostics-256:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_DIAGNOSTICS_RECORD_SIZE=32
+unit-enc-nvm:CFLAGS+=-DNVM_FLASH_WRITEONCE -DMOCK_PARTITIONS -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_CHACHA -DEXT_FLASH -DHAVE_CHACHA
+unit-enc-nvm:WOLFCRYPT_SRC+=$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-enc-nvm-flagshome:CFLAGS+=-DNVM_FLASH_WRITEONCE -DMOCK_PARTITIONS \
+	-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DEXT_FLASH -DHAVE_CHACHA -DFLAGS_HOME
+unit-enc-nvm-flagshome:WOLFCRYPT_SRC+=$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-enc-key:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_CHACHA -DHAVE_CHACHA -DWOLFBOOT_SMALL_STACK \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DWOLFBOOT_FLASH_ERASE_UNIT=128 \
+	-DMOCK_FLASH_ERASE_UNIT=128
+unit-enc-key:WOLFCRYPT_SRC+= \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-enc-key-aes256:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_AES256 -DWOLFSSL_AES_DIRECT -DWOLFSSL_AES_256 \
+	-DWOLFSSL_AES_COUNTER -DWOLFBOOT_SMALL_STACK \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DWOLFBOOT_FLASH_ERASE_UNIT=128 \
+	-DMOCK_FLASH_ERASE_UNIT=128
+unit-enc-key-aes256:WOLFCRYPT_SRC+= \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/aes.c
+unit-enc-key-straddle:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_CHACHA -DHAVE_CHACHA -DWOLFBOOT_SMALL_STACK \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DWOLFBOOT_FLASH_ERASE_UNIT=64 \
+	-DMOCK_FLASH_ERASE_UNIT=64 -DTRAILER_SKIP=24
+unit-enc-key-straddle:WOLFCRYPT_SRC+= \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-enc-key-sector:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_CHACHA -DHAVE_CHACHA -DWOLFBOOT_SMALL_STACK \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DMOCK_FLASH_ERASE_UNIT=0x1000
+unit-enc-key-sector:WOLFCRYPT_SRC+= \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-enc-key-flagshome:CFLAGS+=-DMOCK_PARTITIONS -DEXT_FLASH -DEXT_ENCRYPTED \
+	-DENCRYPT_WITH_CHACHA -DHAVE_CHACHA -DWOLFBOOT_SMALL_STACK \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DWOLFBOOT_FLASH_ERASE_UNIT=128 \
+	-DMOCK_FLASH_ERASE_UNIT=128 -DFLAGS_HOME
+unit-enc-key-flagshome:WOLFCRYPT_SRC+= \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c
+unit-delta:CFLAGS+=-DNVM_FLASH_WRITEONCE -DMOCK_PARTITIONS -DDELTA_UPDATES -DDELTA_BLOCK_SIZE=512
+unit-pkcs11_store:CFLAGS+=-I$(WOLFBOOT_LIB_WOLFPKCS11) -DMOCK_PARTITIONS -DMOCK_KEYVAULT -DSECURE_PKCS11 -DWOLFPKCS11_USER_SETTINGS
+# Same suite against a flash-read cache that only refreshes on
+# hal_cache_invalidate(): fails if the store reads back a sector it just
+# committed without dropping the cache first.
+unit-pkcs11_store-stalecache:CFLAGS+=-I$(WOLFBOOT_LIB_WOLFPKCS11) -DMOCK_PARTITIONS -DMOCK_KEYVAULT -DSECURE_PKCS11 -DWOLFPKCS11_USER_SETTINGS -DMOCK_STALE_CACHE
+unit-psa_store:CFLAGS+=-I$(WOLFBOOT_LIB_WOLFPSA) -DMOCK_PARTITIONS -DMOCK_KEYVAULT -DWOLFCRYPT_TZ_PSA
+unit-update-flash:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Same suite with a 256-byte sector: catches sector-size assumptions in the
+# swap and resume machinery that the larger-sector variants miss
+unit-update-flash-smallsector:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DWOLFBOOT_SECTOR_SIZE=256
+# Single-sector partitions (WOLFBOOT_PARTITION_SIZE == WOLFBOOT_SECTOR_SIZE)
+# are only valid with the trailers kept outside the partitions.
+unit-update-flash-custom-trailer:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DCUSTOM_PARTITION_TRAILER -DWOLFBOOT_SECTOR_SIZE=0x8000
+unit-nsc-update:CFLAGS+=-DMOCK_PARTITIONS -D__WOLFBOOT -DTZEN \
+	-DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Write-once FLAGS_HOME trailers with SWAP in internal flash, with the default
+# and the inverted flag polarity; the inverted one also writes trailers in
+# chunks smaller than a sector
+unit-update-flash-flagshome:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DNVM_FLASH_WRITEONCE -DFLAGS_HOME=1 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-invert:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DNVM_FLASH_WRITEONCE -DWOLFBOOT_FLAGS_INVERT=1 -DFLAGS_HOME=1 \
+	-DFLASHBUFFER_SIZE=512 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Write-once trailers with inverted flags and every partition in internal flash
+unit-update-flash-int-invert:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DNVM_FLASH_WRITEONCE -DWOLFBOOT_FLAGS_INVERT=1 -DFLASHBUFFER_SIZE=512 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-hook:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_HOOK_BOOT -DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-delta:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DDELTA_UPDATES -DDELTA_BLOCK_SIZE=512 -D__WOLFBOOT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Intentionally misaligned config: the mock WOLFBOOT_SECTOR_SIZE (0x400) is
+# not a multiple of DELTA_BLOCK_SIZE (1536). Must fail to build with the
+# delta alignment #error. Used by unit-delta-sector-align.py only, so it is
+# not part of $(TESTS).
+unit-update-flash-delta-misalign:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DDELTA_UPDATES -DDELTA_BLOCK_SIZE=1536 -D__WOLFBOOT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Compile-only check for the DISABLE_BACKUP + WOLFBOOT_ELF_FLASH_SCATTER +
+# EXT_FLASH combination: the ELF restore block in wolfBoot_update() must
+# compile (it used to pass a struct where PART_IS_EXT expects a pointer).
+# Used by unit-elf-scatter-db-build.py only, so it is not part of $(TESTS).
+unit-update-flash-elf-scatter-db:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_ELF_FLASH_SCATTER -DWOLFBOOT_ELF -DIMAGE_HEADER_SIZE=256 \
+	-DDISABLE_BACKUP -D__WOLFBOOT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-self-update:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DRAM_CODE -DARCH_SIM -DUNIT_TEST_SELF_UPDATE_ONLY \
+	-DARCH_FLASH_OFFSET=MOCK_ADDRESS_BOOT -DWOLFBOOT_VERSION=7 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Self-update on ECC flash. The mock applies the ECC flash rules to BOOT, which
+# also holds the self-header. The journal needs 4 KB sectors. The addresses
+# are numbers, as image.c does not see MOCK_ADDRESS_BOOT (0xCD000000).
+unit-update-flash-self-update-ecc:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DRAM_CODE -DARCH_SIM -DUNIT_TEST_SELF_UPDATE_ONLY \
+	-DARCH_FLASH_OFFSET=0xCD000000 -DWOLFBOOT_VERSION=7 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DNVM_FLASH_JOURNAL -DNVM_FLASH_ECC -DWOLFBOOT_FLASH_WRITE_UNIT=32 \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DWOLFBOOT_SELF_HEADER \
+	-DWOLFBOOT_PARTITION_SELF_HEADER_ADDRESS=0xCD004000
+# Same as unit-update-flash-self-update, plus monolithic mode and a self-header
+# (in the unused SWAP sector), to check that an update is only installed if it
+# is newer than the version in the self-header. Some addresses are plain
+# numbers because image.c is built separately and cannot see MOCK_ADDRESS_*.
+unit-update-flash-self-update-monolithic:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DRAM_CODE -DARCH_SIM -DUNIT_TEST_SELF_UPDATE_ONLY -DWOLFBOOT_SELF_UPDATE_MONOLITHIC \
+	-DWOLFBOOT_SELF_HEADER -DWOLFBOOT_SELF_HEADER_EXT \
+	-DWOLFBOOT_PARTITION_SELF_HEADER_ADDRESS=0xCE000000 \
+	-DARCH_FLASH_OFFSET=0xCD000000 -DWOLFBOOT_VERSION=7 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-ram-fit:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP \
+	-DMMU -DWOLFBOOT_FDT -DWOLFBOOT_FIT_RAMDISK \
+	-DWOLFBOOT_DTS_BOOT_ADDRESS=0xCF000000 \
+	-DWOLFBOOT_DTS_UPDATE_ADDRESS=0xCF100000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Compressed-image manifest reader and the shared slot-selection policy.
+unit-compressed-tlv:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DWOLFBOOT_COMPRESSED_UPDATE -DWOLFBOOT_GZIP -DWOLFBOOT_GZIP_SINK \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-ram:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Same RAMBOOT config as unit-update-ram, plus WOLFBOOT_UBOOT_LEGACY to exercise
+# the uImage ih_load payload relocation in wolfBoot_start().
+unit-update-ram-uboot:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP -DWOLFBOOT_UBOOT_LEGACY \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-hwswap:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-ram-noramboot:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP -DWOLFBOOT_NO_RAMBOOT \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-ram-enc:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP -DMMU \
+	-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Same source as unit-update-ram-enc, but with a WOLFBOOT_RAMBOOT_MAX_SIZE that
+# is tighter than the partition cap (NO_PARTITIONS / RAM-load-region flavour),
+# so the bound check is exercised through its RAMBOOT_MAX_SIZE branch.
+unit-update-ram-enc-nopart:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT -DNO_XIP -DMMU \
+	-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DWOLFBOOT_NO_PARTITIONS -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x1000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-ram-nofixed:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH \
+	-DPART_UPDATE_EXT -DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT \
+	-DNO_XIP -DWOLFBOOT_NO_PARTITIONS -DUNIT_TEST_NO_FIXED_PARTITIONS \
+	-DWOLFBOOT_RAMBOOT_MAX_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# F-13604: same non-fixed-partition layout as unit-update-ram-nofixed but
+# without NO_XIP, so WOLFBOOT_USE_RAMBOOT stays off and
+# wolfBoot_open_image_address() runs with a varying load_address on every
+# retry iteration (the A/B fallback path that must re-open the second
+# partition instead of re-verifying the stale header of the first).
+unit-update-ram-nofixed-noramboot:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH \
+	-DPART_UPDATE_EXT -DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT \
+	-DWOLFBOOT_NO_PARTITIONS -DUNIT_TEST_NO_FIXED_PARTITIONS \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# CUSTOM_PARTITION_TRAILER: covers the HAVE_PARTITION_TRAILERS path where
+# partition state is managed via externally-defined get/set_trailer_at.
+unit-update-ram-custom-trailer:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH \
+	-DPART_UPDATE_EXT -DPART_SWAP_EXT -DPART_BOOT_EXT -DWOLFBOOT_DUALBOOT \
+	-DWOLFBOOT_FIXED_PARTITIONS \
+	-DCUSTOM_PARTITION_TRAILER \
+	-DWOLFBOOT_RAMBOOT_MAX_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# CUSTOM_PARTITION_TRAILER + WOLFBOOT_NO_PARTITIONS: no WOLFBOOT_FIXED_PARTITIONS,
+# so wolfboot_magic_trail and the fixed partition addresses are excluded from
+# libwolfboot.c. Proves the partition state API compiles and works through the
+# custom get/set_trailer_at backend without fixed partitions (F-1130279967).
+unit-custom-trailer-nopart:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DWOLFBOOT_NO_PARTITIONS \
+	-DCUSTOM_PARTITION_TRAILER \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Bound the non-FSP disk load to this test's 64-byte load_buffer (TEST_PAYLOAD_SIZE),
+# the cap update_disk.c now requires; all images here are exactly that size.
+unit-update-disk:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x40 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-confirm:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x400 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-golden:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x400 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-failover:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x400 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-golden-enckey:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x400 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# Non-FSP disk-boot OOB regression (CRIT-03). WOLFBOOT_RAMBOOT_MAX_SIZE is the
+# cap the loader applies to the unauthenticated header fw_size before loading to
+# RAM, the same bound update_disk.c and update_ram.c enforce.
+unit-update-disk-fs-enc:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED \
+	-DWOLFBOOT_RAMBOOT_MAX_SIZE=0x1000 -DMAX_DISKS=1 \
+	-DWOLFBOOT_DISK_FS -DWOLFBOOT_FAT32 -DWOLFBOOT_EXT4 \
+	-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-fs:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED \
+	-DWOLFBOOT_RAMBOOT_MAX_SIZE=0x1000 -DMAX_DISKS=1 \
+	-DWOLFBOOT_DISK_FS -DWOLFBOOT_FAT32 -DWOLFBOOT_EXT4 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-oob:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED \
+	-DWOLFBOOT_RAMBOOT_MAX_SIZE=0x1000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# FIT (flattened uImage tree) exits of the encrypted disk loader. The panic hook
+# is what lets the test observe the key material at the instant wolfBoot_panic()
+# is entered, since on target that call never returns.
+UNIT_DISK_FIT_CFLAGS:=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_FDT \
+	-DWOLFBOOT_HOOK_PANIC -DWOLFBOOT_RAMBOOT_MAX_SIZE=0x40 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-fit:CFLAGS+=$(UNIT_DISK_FIT_CFLAGS)
+unit-update-disk-fit-ramdisk:CFLAGS+=$(UNIT_DISK_FIT_CFLAGS)
+# Regression coverage for wolfBoot_check_flash_image_elf() (scattered-ELF
+# integrity check). WOLFBOOT_NO_SIGN keeps this to the hashing path only (no
+# signature verification is exercised by that function).
+unit-image-elf-scatter:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DWOLFBOOT_ELF_FLASH_SCATTER -DWOLFBOOT_ELF \
+	-DIMAGE_HEADER_SIZE=256
+unit-string:CFLAGS+=-fno-builtin
+
+WOLFCRYPT_CFLAGS+=-DWOLFBOOT_SIGN_ECC256 -DWOLFBOOT_SIGN_ECC256 -DHAVE_ECC_KEY_IMPORT -D__WOLFBOOT
+
+
+../../include/target.h: FORCE
+	cp -f target.h $@
+
+unit-extflash.o: FORCE
+	rm -f $@
+	gcc -c -o $@ unit-extflash.c $(CFLAGS)
+
+unit-parser: ../../include/target.h unit-parser.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-parser-large-header: ../../include/target.h unit-parser-large-header.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-fdt: ../../include/target.h unit-fdt.c ../../src/fdt.c
+	gcc -o $@ $^ $(CFLAGS) -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+# Same suite with the pointer bound narrowed to 32 bits, so a two-cell
+# load/entry above 4 GB has to be rejected rather than truncated.
+unit-fdt-addr32:CFLAGS+=-DWOLFBOOT_FDT -DFDT_PTR_MAX=0xFFFFFFFFUL
+unit-fdt-addr32: ../../include/target.h unit-fdt.c ../../src/fdt.c
+	gcc -o $@ $^ $(CFLAGS) -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-extflash: ../../include/target.h unit-extflash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-spi-flash: ../../include/target.h unit-spi-flash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-qspi-flash: ../../include/target.h unit-qspi-flash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-uart-flash: ../../include/target.h unit-uart-flash.c ../../src/uart_flash.c
+	gcc -o $@ unit-uart-flash.c $(CFLAGS) $(LDFLAGS)
+
+unit-tpm-rsa-exp: ../../include/target.h unit-tpm-rsa-exp.c ../../src/string.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_TPM_VERIFY -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-check-rot-auth: ../../include/target.h unit-tpm-check-rot-auth.c ../../src/string.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_TPM_VERIFY -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-api-names: ../../include/target.h unit-tpm-api-names.c ../../src/string.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-nsc-cert: ../../include/target.h unit-tpm-nsc-cert.c ../../src/string.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 -D__ARM_FEATURE_CMSE=3U -DCSME_NSE_API= \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# The PKCS#11 NSC veneers are exercised here through C_CreateObject_nsc_call
+# and C_DeriveKey_nsc_call only; --gc-sections drops the remaining veneers so
+# just those two wolfPKCS11 entry points need a stub.
+unit-pkcs11-nsc-zeroize: ../../include/target.h unit-pkcs11-nsc-zeroize.c
+	gcc -o $@ unit-pkcs11-nsc-zeroize.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/misc.c \
+		$(CFLAGS) -I$(WOLFBOOT_LIB_WOLFPKCS11) -DSECURE_PKCS11 \
+		-DWOLFPKCS11_USER_SETTINGS -DWOLFCRYPT_SECURE_MODE \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# The pin-zeroize test pulls libwolfboot.c into the test translation
+# unit; --gc-sections drops the unused boot paths so only the crypto
+# init/deinit dependency set must link.
+unit-pkcs11-pin-zeroize: ../../include/target.h unit-pkcs11-pin-zeroize.c
+	gcc -o $@ unit-pkcs11-pin-zeroize.c $(CFLAGS) -DMOCK_PARTITIONS \
+		-DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 \
+		-DPRINTF_ENABLED -DEXT_FLASH -I$(WOLFBOOT_LIB_WOLFPKCS11) \
+		-DSECURE_PKCS11 -DWOLFPKCS11_USER_SETTINGS -ffunction-sections \
+		-fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-fwtpm-stub: ../../include/target.h unit-fwtpm-stub.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) \
+		-DWOLFTPM_USER_SETTINGS -ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+unit-fwtpm-nv-oob: ../../include/target.h unit-fwtpm-nv-oob.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) \
+		-DWOLFTPM_USER_SETTINGS $(LDFLAGS)
+
+# unit-fwtpm-rsp-overrun: a response capacity below the 10-byte minimum
+# response must not be overrun by the fwTPM processor (F-11043); the
+# veneer processes into a staging buffer and copies only what fits.
+unit-fwtpm-rsp-overrun: ../../include/target.h unit-fwtpm-rsp-overrun.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) \
+		-DWOLFTPM_USER_SETTINGS $(LDFLAGS)
+
+# unit-fwtpm-cmd-toctou: a midflight NS rewrite of the command buffer
+# must not change what the processor executes (F-11044); the veneer
+# stages the command in secure memory before processing.
+unit-fwtpm-cmd-toctou: ../../include/target.h unit-fwtpm-cmd-toctou.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) \
+		-DWOLFTPM_USER_SETTINGS $(LDFLAGS)
+
+# unit-zynq-dma-range: block-index math behind hal_dma_set_noncached()
+unit-zynq-dma-range: unit-zynq-dma-range.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+# unit-fdt-memrsv-wrap: layout validation in front of fdt_add_mem_rsv()
+# (F-11045). Links the real parser rather than extracting one function.
+# unit-ns16550: generic NS16550 driver (divisor math, reg-shift/reg-offset
+# arithmetic, CRLF, RX, bounded busy-waits) against an emulated register block
+unit-ns16550: unit-ns16550.c ../../hal/uart/ns16550.c
+	gcc -o $@ unit-ns16550.c $(CFLAGS) $(LDFLAGS)
+
+unit-psoc-c3-divider: unit-psoc-c3-divider.c ../../hal/psoc_c3.h
+	gcc -o $@ unit-psoc-c3-divider.c $(CFLAGS) $(LDFLAGS)
+
+unit-psoc-e8-tz: unit-psoc-e8-tz.c ../../hal/psoc_e8_tz.c ../../hal/psoc_e8.h
+	gcc -o $@ unit-psoc-e8-tz.c -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-psoc-e8-flash: unit-psoc-e8-flash.c unit-mmio.h ../../hal/psoc_e8.c \
+		../../hal/psoc_e8.h ../../src/qspi_flash.c
+	gcc -o $@ unit-psoc-e8-flash.c -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-fdt-memrsv-wrap:CFLAGS+=-DWOLFBOOT_FDT
+unit-fdt-memrsv-wrap: unit-fdt-memrsv-wrap.c ../../src/fdt.c
+	gcc -o $@ unit-fdt-memrsv-wrap.c ../../src/fdt.c -I../../include \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-tpm-blob: ../../include/target.h unit-tpm-blob.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_TPM_SEAL -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-advio-zeroize: ../../include/target.h unit-tpm-advio-zeroize.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFTPM_ADV_IO \
+		-DWOLFTPM_CHECK_WAIT_STATE -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-i2c-zeroize: ../../include/target.h unit-tpm-i2c-zeroize.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFTPM_ADV_IO -DWOLFTPM_I2C \
+		-DWOLFBOOT_TPM_I2C -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-tpm-mfgid-eh-zeroize: ../../include/target.h unit-tpm-mfgid-eh-zeroize.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFTPM_MFG_IDENTITY \
+		-DWOLFBOOT_TPM_MFG_AUTH_DERIVE -DWOLFBOOT_SIGN_RSA2048 \
+		-DWOLFBOOT_HASH_SHA256 -D__ARM_FEATURE_CMSE=3U -DCSME_NSE_API= \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-policy-create: ../../include/target.h unit-policy-create.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c
+	gcc -o $@ $^ -I../tpm $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_SIGN_ECC256 -DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-policy-sign: ../../include/target.h unit-policy-sign.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c
+	gcc -o $@ $^ -I../tpm $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_SIGN_ECC256 -DWOLFBOOT_HASH_SHA256 \
+		-DHAVE_ECC_KEY_IMPORT \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-sign-encrypted-output: ../../include/target.h unit-sign-encrypted-output.c \
+		$(KEYTOOLS_SIGN_SRCS)
+	gcc -o $@ $^ -I../keytools $(CFLAGS) -DML_DSA_LEVEL=2 \
+		-D"LMS_LEVELS=1" -D"LMS_HEIGHT=10" -D"LMS_WINTERNITZ=8" \
+		-DWOLFBOOT_XMSS_PARAMS=\"XMSS-SHA2_10_256\" \
+		-ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+unit-sign-hybrid-keyload: ../../include/target.h unit-sign-hybrid-keyload.c \
+		$(KEYTOOLS_SIGN_SRCS)
+	gcc -o $@ $^ -I../keytools $(CFLAGS) -DML_DSA_LEVEL=2 -DDELTA_UPDATES \
+		-D"LMS_LEVELS=1" -D"LMS_HEIGHT=10" -D"LMS_WINTERNITZ=8" \
+		-DWOLFBOOT_XMSS_PARAMS=\"XMSS-SHA2_10_256\" \
+		-ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+unit-sign-header-failure: ../../include/target.h unit-sign-header-failure.c \
+		$(KEYTOOLS_SIGN_SRCS)
+	gcc -o $@ $^ -I../keytools $(CFLAGS) -DML_DSA_LEVEL=2 -DDELTA_UPDATES \
+		-D"LMS_LEVELS=1" -D"LMS_HEIGHT=10" -D"LMS_WINTERNITZ=8" \
+		-DWOLFBOOT_XMSS_PARAMS=\"XMSS-SHA2_10_256\" \
+		-ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+unit-keygen-xmss-params: ../../include/target.h unit-keygen-xmss-params.c
+	gcc -o $@ $^ -I../keytools $(CFLAGS) -DML_DSA_LEVEL=2 \
+		-D"LMS_LEVELS=1" -D"LMS_HEIGHT=10" -D"LMS_WINTERNITZ=8" \
+		-DWOLFBOOT_XMSS_PARAMS=\"XMSS-SHA2_10_256\" \
+		-ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+unit-rot-auth: ../../include/target.h unit-rot-auth.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c
+	gcc -o $@ $^ -I../tpm $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS -DWOLFBOOT_SIGN_ECC256 -DWOLFBOOT_HASH_SHA256 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-store-sbrk: unit-store-sbrk.c ../../src/store_sbrk.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-string: ../../include/target.h unit-string.c
+	gcc -o $@ $^ $(CFLAGS) -DDEBUG_UART -DPRINTF_ENABLED $(LDFLAGS)
+
+unit-arm-tee-psa-ipc: ../../include/target.h unit-arm-tee-psa-ipc.c ../../src/arm_tee_psa_ipc.c
+	gcc -o $@ unit-arm-tee-psa-ipc.c $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFPSA)/wolfpsa \
+		-ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+DICE_TOKEN_TEST_CFLAGS=-I$(WOLFBOOT_LIB_WOLFCOSE)/include \
+	-I$(WOLFBOOT_LIB_WOLFSSL) -DUNIT_TEST_AUTH -DWOLFBOOT_SIGN_ECC256 \
+	-DWOLFCRYPT_SECURE_MODE -DHAVE_HKDF -DWOLFBOOT_NO_PARTITIONS \
+	-DWOLFCOSE_LEAN -DWOLFCOSE_ENABLE_EXT_SIGN \
+	-ffunction-sections -fdata-sections
+unit-dice-token-size:CFLAGS+=$(DICE_TOKEN_TEST_CFLAGS)
+unit-dice-token-nosign:CFLAGS+=$(DICE_TOKEN_TEST_CFLAGS) -DWOLFBOOT_NO_SIGN
+DICE_TOKEN_TEST_SRC=unit-dice-token-size.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_cbor.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_util.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_alg.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_ecc.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_hdr.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_key.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_struct.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_recipient.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_sign1.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_sign.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_countersign.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_encrypt0.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_mac0.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_encrypt.c \
+	$(WOLFBOOT_LIB_WOLFCOSE)/src/wolfcose_mac.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/hash.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ecc.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/asn.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/logging.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/random.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_c32.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_c64.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_int.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/tfm.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/wc_port.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/wolfmath.c
+unit-dice-token-size unit-dice-token-nosign: ../../include/target.h \
+	$(DICE_TOKEN_TEST_SRC)
+	gcc -o $@ $(DICE_TOKEN_TEST_SRC) $(CFLAGS) $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-va416x0-fram: unit-va416x0-fram.c ../../hal/va416x0.c
+	gcc -o $@ unit-va416x0-fram.c $(CFLAGS) $(LDFLAGS)
+
+unit-xspi-tfd-index: unit-xspi-tfd-index.c
+	gcc -o $@ unit-xspi-tfd-index.c $(CFLAGS) -I../../hal $(LDFLAGS)
+
+unit-pic32-pfswap: unit-pic32-pfswap.c
+	gcc -o $@ unit-pic32-pfswap.c $(CFLAGS) $(LDFLAGS)
+
+unit-max-space: ../../include/target.h unit-max-space.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+# unit-mpusize includes src/boot_arm.c directly (guarded to its host-portable
+# MPU helpers via WOLFBOOT_UNIT_TEST_MPU), so boot_arm.c is not a separate input.
+unit-mpusize: ../../include/target.h unit-mpusize.c
+	gcc -o $@ unit-mpusize.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-h7 includes hal/stm32h7.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32h7.c is not a separate input.
+unit-flash-erase-h7: unit-flash-erase-h7.c ../../hal/stm32h7.c
+	gcc -o $@ unit-flash-erase-h7.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-h7s includes hal/stm32h7s.c directly (guarded to
+# hal_flash_erase via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32h7s.c is
+# not a separate input.
+unit-flash-erase-h7s: unit-flash-erase-h7s.c ../../hal/stm32h7s.c
+	gcc -o $@ unit-flash-erase-h7s.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-wb includes hal/stm32wb.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32wb.c is not a separate input.
+unit-flash-erase-wb: unit-flash-erase-wb.c ../../hal/stm32wb.c
+	gcc -o $@ unit-flash-erase-wb.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-l0 includes hal/stm32l0.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32l0.c is not a separate input.
+unit-flash-erase-l0: unit-flash-erase-l0.c ../../hal/stm32l0.c
+	gcc -o $@ unit-flash-erase-l0.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-g0 includes hal/stm32g0.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32g0.c is not a separate input.
+unit-flash-erase-g0: unit-flash-erase-g0.c ../../hal/stm32g0.c
+	gcc -o $@ unit-flash-erase-g0.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-c0 includes hal/stm32c0.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32c0.c is not a separate input.
+unit-flash-erase-c0: unit-flash-erase-c0.c ../../hal/stm32c0.c
+	gcc -o $@ unit-flash-erase-c0.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-erase-u3 includes hal/stm32u3.c directly (guarded to hal_flash_erase
+# via WOLFBOOT_UNIT_TEST_FLASH_ERASE), so stm32u3.c is not a separate input.
+# -I../../ so that #include "hal/stm32u3.h" resolves from the repo root.
+unit-flash-erase-u3: unit-flash-erase-u3.c ../../hal/stm32u3.c ../../hal/stm32u3.h
+	gcc -o $@ unit-flash-erase-u3.c -I../../ $(CFLAGS) $(LDFLAGS)
+
+kinetis_erase_extract.h: ../../hal/kinetis.c
+	sed -n '/^int RAMFUNCTION hal_flash_erase(/,/^}/p' $< > $@
+
+unit-flash-erase-kinetis: unit-flash-erase-kinetis.c kinetis_erase_extract.h
+	gcc -o $@ unit-flash-erase-kinetis.c $(CFLAGS) $(LDFLAGS)
+
+# unit-flash-m2354 includes hal/m2354.c directly (guarded to the flash driver
+# via WOLFBOOT_UNIT_TEST_FLASH), so m2354.c is not a separate input and the
+# register-bound clock, UART and TrustZone code is excluded. hal/m2354.h is
+# still compiled, for the flash geometry and the NS alias bit.
+unit-flash-m2354: unit-flash-m2354.c ../../hal/m2354.c ../../hal/m2354.h
+	gcc -o $@ unit-flash-m2354.c -I../.. $(CFLAGS) $(LDFLAGS)
+
+# unit-otp-keystore includes src/flash_otp_keystore.c directly (guarded to its
+# host-portable code via WOLFBOOT_UNIT_TEST_OTP_KEYSTORE), so it is not a
+# separate input.
+unit-otp-keystore: unit-otp-keystore.c ../../src/flash_otp_keystore.c
+	gcc -o $@ unit-otp-keystore.c $(CFLAGS) $(LDFLAGS)
+
+# unit-snvm-keystore includes hal/mpfs250_snvm.c directly and mocks
+# mpfs_snvm_read, so it is not a separate input.  -I../.. resolves
+# hal/mpfs250.h, which mpfs250_snvm.h includes.  Four modules so the
+# page-spanning reads are exercised.
+unit-snvm-keystore: unit-snvm-keystore.c ../../hal/mpfs250_snvm.c
+	gcc -o $@ unit-snvm-keystore.c -I../.. -DSNVM_KEYSTORE_MAX_MODULES=4 \
+		$(CFLAGS) $(LDFLAGS)
+
+# unit-snvm-kek includes hal/mpfs250_snvm.c (KEK and encryption-key provider)
+# directly with the PUF and sNVM services mocked.  SHA-384 and AES key-wrap
+# come from wolfCrypt, built from source like the image tests.
+unit-snvm-kek: unit-snvm-kek.c ../../hal/mpfs250_snvm.c
+	gcc -o $@ unit-snvm-kek.c -I../.. \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/aes.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha512.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+		-DSNVM_KEK -DWOLFBOOT_ENABLE_HASH_SHA384 -DWOLFSSL_AES_256 \
+		-DHAVE_AES_KEYWRAP -DWOLFSSL_AES_DIRECT -DHAVE_AES_ECB \
+		-DHAVE_AES_DECRYPT -DCUSTOM_ENCRYPT_KEY -DEXT_ENCRYPTED \
+		-DENCRYPT_WITH_AES256 -DSNVM_ENCKEY_PROVISION \
+		-DSNVM_ENCKEY_INSECURE_TEST_KEY $(CFLAGS) $(LDFLAGS)
+
+# The same provider built with the two-key layout, so the real selector, getter
+# and erase are exercised rather than the disk suite's mocks.
+unit-snvm-kek-golden: unit-snvm-kek.c ../../hal/mpfs250_snvm.c
+	gcc -o $@ unit-snvm-kek.c -I../.. \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/aes.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha512.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+		-DSNVM_KEK -DWOLFBOOT_ENABLE_HASH_SHA384 -DWOLFSSL_AES_256 \
+		-DHAVE_AES_KEYWRAP -DWOLFSSL_AES_DIRECT -DHAVE_AES_ECB \
+		-DHAVE_AES_DECRYPT -DCUSTOM_ENCRYPT_KEY -DEXT_ENCRYPTED \
+		-DENCRYPT_WITH_AES256 -DSNVM_ENCKEY_PROVISION \
+		-DDISK_GOLDEN_ENCRYPT_KEY -DSNVM_GOLDEN_ENCKEY_PROVISION \
+		-DSNVM_GOLDEN_ENCKEY_MODULE=199 -DDISK_FAILOVER_ZEROIZE \
+		-DSNVM_ENCKEY_INSECURE_TEST_KEY $(CFLAGS) $(LDFLAGS)
+
+# unit-otp-keystore-gen-zeroize includes the host tool
+# tools/keytools/otp/otp-keystore-gen.c directly (via #define main) and
+# interposes read()/malloc()/free() (dlsym RTLD_NEXT, hence -ldl) to observe
+# the OTP buffer and UDS stack array at free() time.
+unit-otp-keystore-gen-zeroize: unit-otp-keystore-gen-zeroize.c \
+		../keytools/otp/otp-keystore-gen.c unit-keystore.c
+	gcc -o $@ unit-otp-keystore-gen-zeroize.c unit-keystore.c \
+		-DFLASH_OTP_KEYSTORE $(CFLAGS) $(LDFLAGS) -ldl
+
+unit-update-flash-self-update: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-self-update-ecc: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-self-update-monolithic: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(CFLAGS) $(LDFLAGS)
+
+unit-sdhci-response-bits: ../../include/target.h unit-sdhci-response-bits.c
+	gcc -o $@ $^ $(CFLAGS) -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-sdhci-disk-unaligned: ../../include/target.h unit-sdhci-disk-unaligned.c
+	gcc -o $@ $^ $(CFLAGS) -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-sdhci-dma-error: ../../include/target.h unit-sdhci-dma-error.c
+	gcc -o $@ $^ $(CFLAGS) -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-cm4-sdhci: ../../include/target.h unit-cm4-sdhci.c
+	gcc -o $@ $^ $(CFLAGS) -I../.. -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+unit-imx95-ahab: ../../include/target.h unit-imx95-ahab.c
+	gcc -o $@ unit-imx95-ahab.c $(CFLAGS) -I../.. -ffunction-sections \
+		-fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-cm4-rauc-slot: ../../include/target.h unit-cm4-rauc-slot.c ../../src/ubootenv.c
+	gcc -o $@ unit-cm4-rauc-slot.c ../../src/ubootenv.c $(CFLAGS) -I../.. \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-ubootenv: unit-ubootenv.c ../../src/ubootenv.c
+	gcc -o $@ $< $(CFLAGS) -I../.. $(LDFLAGS)
+
+unit-aes128: ../../include/target.h unit-extflash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-aes256: ../../include/target.h unit-extflash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-chacha20: ../../include/target.h unit-extflash.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-pci:  unit-pci.c ../../src/pci.c
+	gcc -o $@ $< $(CFLAGS) -DWOLFBOOT_USE_PCI $(LDFLAGS)
+
+# unit-pci-4gib reruns the same test file with the MMIO pool ending
+# exactly at the 4 GiB boundary ([0xC0000000, 0x100000000)), which a
+# 32-bit pool limit cannot represent. Only the pool-end test runs.
+unit-pci-4gib:  unit-pci.c ../../src/pci.c
+	gcc -o $@ $< $(CFLAGS) -DWOLFBOOT_USE_PCI \
+	    -DUNIT_TEST_PCI_POOL_4GIB \
+	    -DPCI_MMIO32_BASE=0xC0000000ULL \
+	    -DPCI_MMIO32_LENGTH=0x40000000ULL \
+	    -DPCI_MMIO32_PREFETCH_BASE=0x80000000ULL \
+	    -DPCI_MMIO32_PREFETCH_LENGTH=0x40000000ULL \
+	    $(LDFLAGS)
+
+# linux_loader.c is x86 32bit only and pulls in inline asm guarded on 32bit;
+# build standalone with -m32 and without coverage (no 32bit gcov/check libs).
+unit-linux-loader-e820: ../../include/target.h unit-linux-loader-e820.c
+	gcc -m32 -o $@ unit-linux-loader-e820.c -I. -I../../src -I../../include \
+		-g -DUNIT_TEST -DWOLFBOOT_FSP -DUCODE0_ADDRESS=0 \
+		-DWOLFBOOT_LOAD_BASE=0x100000 \
+		-Wl,--defsym,_end_wb=_start_wolfboot+0x100000
+
+unit-linux-loader-syssize: ../../include/target.h unit-linux-loader-syssize.c
+	gcc -m32 -o $@ unit-linux-loader-syssize.c -I. -I../../src -I../../include \
+		-g -DUNIT_TEST -DWOLFBOOT_FSP -DUCODE0_ADDRESS=0 \
+		-DWOLFBOOT_LOAD_BASE=0x100000 \
+		-Wl,--defsym,_end_wb=_start_wolfboot+0x100000
+
+unit-linux-loader-initrd: ../../include/target.h unit-linux-loader-initrd.c
+	gcc -m32 -o $@ unit-linux-loader-initrd.c -I. -I../../src -I../../include \
+		-g -DUNIT_TEST -DWOLFBOOT_FSP -DUCODE0_ADDRESS=0 \
+		-DWOLFBOOT_LOAD_BASE=0x100000 \
+		-Wl,--defsym,_end_wb=_start_wolfboot+0x100000
+
+# unit-boot-state exercises the anti-rollback state machine in src/boot_state.c
+# through a mock storage backend. Built standalone (not via the common CFLAGS)
+# so the stubs-boot-state/ headers shadow user_settings.h/printf.h/loader.h and the
+# host build needs no target configuration. boot_state.c has no inline asm, so
+# no -m32 is required.
+unit-boot-state: unit-boot-state.c ../../src/boot_state.c
+	gcc -o $@ unit-boot-state.c -Istubs-boot-state -I../../src -I../../include \
+		-g -Wall -DUNIT_TEST -DWOLFBOOT_ANTI_ROLLBACK
+
+unit-boot-state-halt: unit-boot-state.c ../../src/boot_state.c
+	gcc -o $@ unit-boot-state.c -Istubs-boot-state -I../../src -I../../include \
+		-g -Wall -DUNIT_TEST -DWOLFBOOT_ANTI_ROLLBACK \
+		-DWOLFBOOT_ANTI_ROLLBACK_HALT_ON_FAILURE
+
+unit-boot-x86-fsp: ../../include/target.h unit-boot-x86_fsp.c
+	gcc -o $@ $^ $(CFLAGS) -DWOLFBOOT_LOAD_BASE=0x100000 -DWOLFBOOT_FSP \
+		-DUCODE0_ADDRESS=0 -ffunction-sections -fdata-sections $(LDFLAGS) \
+		-Wl,--gc-sections
+
+# Compile-only check for the STAGE1_AUTH variant of boot_x86_fsp.c. The real
+# stage1 authentication build needs an i686 toolchain the unit test CI does
+# not have, so this keeps the variant from silently rotting. Used by
+# unit-x86-fsp-stage1auth-build.py only, so it is not part of $(TESTS).
+unit-boot-x86-fsp-stage1auth: ../../include/target.h unit-boot-x86_fsp.c FORCE
+	gcc -c -o /dev/null unit-boot-x86_fsp.c $(CFLAGS) \
+		-DWOLFBOOT_LOAD_BASE=0x100000 -DWOLFBOOT_FSP -DUCODE0_ADDRESS=0 \
+		-DSTAGE1_AUTH
+
+unit-loader-tpm-init: ../../include/target.h unit-loader-tpm-init.c
+	gcc -o $@ $^ $(CFLAGS) -I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFBOOT_LOADER_MAIN -DWOLFBOOT_TPM \
+		-DWOLFTPM_USER_SETTINGS \
+		-DWOLFBOOT_HOOK_PANIC -DWOLFBOOT_SIGN_ECC256 \
+		-DWOLFBOOT_HASH_SHA256 -ffunction-sections -fdata-sections \
+		$(LDFLAGS) -Wl,--gc-sections
+
+unit-mock-state: ../../include/target.h unit-mock-state.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-sectorflags: ../../include/target.h unit-sectorflags.c
+	gcc -o $@ $^ $(CFLAGS) $(LDFLAGS)
+
+unit-image:  unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ $^ $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-image-hybrid: ../../include/target.h unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DUNIT_IMAGE_HYBRID_ONLY \
+		-DSIGN_HYBRID -DWOLFBOOT_SIGN_SECONDARY_ECC256 \
+		-DIMAGE_HEADER_SIZE=512 $(LDFLAGS)
+
+unit-image-nopart: ../../include/target.h unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DWOLFBOOT_NO_PARTITIONS -DMOCK_PARTITIONS \
+		-DWOLFBOOT_RAMBOOT_MAX_SIZE=0x1000 $(LDFLAGS)
+
+unit-image-sha384: ../../include/target.h unit-image.c unit-common.c
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha512.c \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DUNIT_IMAGE_KEYHASH_ONLY \
+		-DWOLFBOOT_HASH_SHA384 $(LDFLAGS)
+
+unit-image-sha3-384: ../../include/target.h unit-image.c unit-common.c
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha3.c \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DUNIT_IMAGE_KEYHASH_ONLY \
+		-DWOLFBOOT_HASH_SHA3_384 $(LDFLAGS)
+
+# Exercises the raw-DTB authentication helper wolfBoot_verify_dts_digest()
+# (Fenrir #7998). WOLFBOOT_FDT compiles the DTS helpers in image.c, which pull
+# in fdt.c for wolfBoot_get_dts_size(). The sha384/sha3-384 variants cover the
+# corresponding wolfBoot_hash_buffer() branches used by real MMU targets.
+unit-image-dts: ../../include/target.h unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) ../../src/fdt.c \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DWOLFBOOT_FDT $(LDFLAGS)
+
+unit-image-dts-sha384: ../../include/target.h unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) ../../src/fdt.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha512.c \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DWOLFBOOT_FDT -DUNIT_IMAGE_DTS_ONLY \
+		-DWOLFBOOT_HASH_SHA384 $(LDFLAGS)
+
+unit-image-dts-sha3-384: ../../include/target.h unit-image.c unit-common.c $(WOLFCRYPT_SRC)
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) ../../src/fdt.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha3.c \
+		$(CFLAGS) $(WOLFCRYPT_CFLAGS) -DWOLFBOOT_FDT -DUNIT_IMAGE_DTS_ONLY \
+		-DWOLFBOOT_HASH_SHA3_384 $(LDFLAGS)
+
+unit-image-rsa: CFLAGS += -DWOLFBOOT_SIGN_RSA2048
+unit-image-rsa: ../../include/target.h unit-image.c unit-common.c
+	gcc -o $@ unit-image.c unit-common.c $(WOLFCRYPT_SRC) \
+		$(CFLAGS) -D__WOLFBOOT $(LDFLAGS)
+
+unit-nvm: ../../include/target.h unit-nvm.c
+	gcc -o $@ unit-nvm.c $(CFLAGS) $(LDFLAGS)
+
+unit-nvm-flagshome: ../../include/target.h unit-nvm.c
+	gcc -o $@ unit-nvm.c $(CFLAGS) $(LDFLAGS)
+
+unit-flash-is-erased: ../../include/target.h unit-flash-is-erased.c
+	gcc -o $@ unit-flash-is-erased.c $(CFLAGS) $(LDFLAGS)
+
+unit-flash-is-erased-invert: ../../include/target.h unit-flash-is-erased.c
+	gcc -o $@ unit-flash-is-erased.c $(CFLAGS) $(LDFLAGS)
+
+unit-nvm-journal: ../../include/target.h unit-nvm-journal.c ../../src/libwolfboot.c
+	gcc -o $@ unit-nvm-journal.c ../../src/libwolfboot.c $(CFLAGS) $(LDFLAGS)
+
+unit-nvm-journal-ecc: ../../include/target.h unit-nvm-journal.c ../../src/libwolfboot.c
+	gcc -o $@ unit-nvm-journal.c ../../src/libwolfboot.c $(CFLAGS) $(LDFLAGS)
+
+unit-nvm-journal-dual: ../../include/target.h unit-nvm-journal.c ../../src/libwolfboot.c
+	gcc -o $@ unit-nvm-journal.c ../../src/libwolfboot.c $(CFLAGS) $(LDFLAGS)
+
+unit-nvm-journal-dual-ecc: ../../include/target.h unit-nvm-journal.c ../../src/libwolfboot.c
+	gcc -o $@ unit-nvm-journal.c ../../src/libwolfboot.c $(CFLAGS) $(LDFLAGS)
+
+unit-diagnostics: ../../include/target.h unit-diagnostics.c
+	gcc -o $@ unit-diagnostics.c $(CFLAGS) $(LDFLAGS)
+
+unit-diagnostics-256: ../../include/target.h unit-diagnostics.c
+	gcc -o $@ unit-diagnostics.c $(CFLAGS) $(LDFLAGS)
+
+unit-enc-nvm: ../../include/target.h unit-enc-nvm.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-enc-nvm.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-enc-nvm-flagshome: ../../include/target.h unit-enc-nvm.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-enc-nvm.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-enc-key unit-enc-key-aes256 unit-enc-key-straddle \
+unit-enc-key-sector unit-enc-key-flagshome: \
+	../../include/target.h unit-enc-key.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-enc-key.c $(CFLAGS) \
+		$(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-delta: ../../include/target.h unit-delta.c
+	gcc -o $@ unit-delta.c $(CFLAGS) $(LDFLAGS)
+
+unit-gzip: ../../include/target.h unit-gzip.c
+	gcc -o $@ unit-gzip.c $(CFLAGS) -DWOLFBOOT_GZIP $(LDFLAGS)
+
+# The same suite over the bit-serial decoder (WOLFBOOT_GZIP_SMALL), over
+# the default decoder with the 32-bit bit buffer the RV32/ARMv7 targets
+# use, and with the narrowest root table, where every code of 8 bits or
+# more takes the second level so that path is exercised by every stream.
+unit-gzip-small: ../../include/target.h unit-gzip.c
+	gcc -o $@ unit-gzip.c $(CFLAGS) -DWOLFBOOT_GZIP -DWOLFBOOT_GZIP_SMALL \
+		$(LDFLAGS)
+
+unit-gzip-bits32: ../../include/target.h unit-gzip.c
+	gcc -o $@ unit-gzip.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_BITS_32 $(LDFLAGS)
+
+unit-gzip-root7: ../../include/target.h unit-gzip.c
+	gcc -o $@ unit-gzip.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_ROOT_BITS=7 $(LDFLAGS)
+
+# The sink entry point, which decompresses to a callback with a bounded
+# window instead of to a flat buffer. Fixtures need a chosen window size,
+# which host gzip(1) cannot produce, so these link zlib. Built over the same
+# decoder variants as the suite above, since the block decoders differ.
+unit-gzip-sink: ../../include/target.h unit-gzip-sink.c
+	gcc -o $@ unit-gzip-sink.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_SINK $(LDFLAGS)
+
+unit-gzip-sink-small: ../../include/target.h unit-gzip-sink.c
+	gcc -o $@ unit-gzip-sink.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_SINK -DWOLFBOOT_GZIP_SMALL $(LDFLAGS)
+
+unit-gzip-sink-bits32: ../../include/target.h unit-gzip-sink.c
+	gcc -o $@ unit-gzip-sink.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_SINK -DWOLFBOOT_GZIP_BITS_32 $(LDFLAGS)
+
+unit-gzip-sink-root7: ../../include/target.h unit-gzip-sink.c
+	gcc -o $@ unit-gzip-sink.c $(CFLAGS) -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_SINK -DWOLFBOOT_GZIP_ROOT_BITS=7 $(LDFLAGS)
+
+# FIT-loader gzip / unsupported-compression branch coverage. Built twice
+# from the same source: once with WOLFBOOT_GZIP (success + decompress
+# failure paths) and once without (compile-time fail-closed path).
+unit-fit-gzip: ../../include/target.h unit-fit-gzip.c
+	gcc -o $@ unit-fit-gzip.c $(CFLAGS) -DWOLFBOOT_FDT -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_FIT_RAMDISK \
+		-DWOLFBOOT_NO_PRINTF \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-fit-nogzip: ../../include/target.h unit-fit-gzip.c
+	gcc -o $@ unit-fit-gzip.c $(CFLAGS) -DWOLFBOOT_FDT \
+		-DWOLFBOOT_NO_PRINTF \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-fit-gzip-small: ../../include/target.h unit-fit-gzip.c
+	gcc -o $@ unit-fit-gzip.c $(CFLAGS) -DWOLFBOOT_FDT -DWOLFBOOT_GZIP \
+		-DWOLFBOOT_GZIP_SMALL -DWOLFBOOT_FIT_RAMDISK -DWOLFBOOT_NO_PRINTF \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# FIT fpga-subimage discovery (fit_find_images / fit_get_compatible).
+unit-fit-fpga: ../../include/target.h unit-fit-fpga.c
+	gcc -o $@ unit-fit-fpga.c $(CFLAGS) -DWOLFBOOT_FDT \
+		-DWOLFBOOT_NO_PRINTF \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-update-flash: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-smallsector: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-flagshome: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-invert: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-int-invert: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+# DISABLE_BACKUP runtime variant: direct update->BOOT copy without the
+# power-fail-safe swap, to test the update-consumption behavior of that path.
+unit-update-flash-custom-trailer: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-db:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DDISABLE_BACKUP \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-db: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+# F-13636: first unit target that defines TZEN. Compiles libwolfboot.c with
+# __WOLFBOOT + TZEN (non-CMSE: WOLFBOOT_NSC_NS_RW is a pass-through) to unit
+# test the NSC update-partition bounds checks against the mock flash.
+unit-nsc-update: ../../include/target.h unit-nsc-update.c
+	gcc -o $@ unit-nsc-update.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-secure-handoff: unit-secure-handoff.c
+	gcc -o $@ unit-secure-handoff.c $(CFLAGS)
+
+unit-update-flash-hook: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-delta: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c ../../src/delta.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-delta-misalign: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c ../../src/delta.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-elf-scatter-db: ../../include/target.h unit-update-flash.c FORCE
+	gcc -c -o /dev/null unit-update-flash.c $(CFLAGS)
+
+unit-update-flash-diag-build:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DEXT_FLASH -DPART_UPDATE_EXT -DPART_SWAP_EXT \
+	-DWOLFBOOT_PERSIST_FAILURE_STATUS \
+	-DWOLFBOOT_DIAGNOSTICS_ADDRESS=0xD0000000 -DWOLFBOOT_DIAGNOSTICS_SECTORS=2 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-diag-build: ../../include/target.h unit-update-flash.c FORCE
+	gcc -c -o /dev/null unit-update-flash.c $(CFLAGS)
+
+unit-image-wolfhsm-client-build:CFLAGS+=-I$(WOLFBOOT_LIB_WOLFHSM) \
+	-DWOLFHSM_CFG_NO_SYS_TIME -DMOCK_PARTITIONS -DWOLFBOOT_HASH_SHA256 \
+	-DWOLFBOOT_SIGN_ECC256 -DWOLFBOOT_ENABLE_WOLFHSM_CLIENT \
+	-DIMAGE_HEADER_SIZE=256 -D__WOLFBOOT
+unit-image-wolfhsm-client-build: ../../include/target.h ../../src/image.c FORCE
+	gcc -c -o /dev/null ../../src/image.c $(CFLAGS)
+
+unit-update-flash-enc:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DCUSTOM_ENCRYPT_KEY -DUNIT_TEST_FALLBACK_ONLY \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-enc: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+	$(CFLAGS) $(LDFLAGS)
+
+# Same encrypted target without UNIT_TEST_FALLBACK_ONLY, so the full
+# end-to-end suite (forward updates, rollback, ...) runs against the
+# encrypted swap and its IV derivation.
+unit-update-flash-enc-full:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DPART_SWAP_EXT -DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DCUSTOM_ENCRYPT_KEY \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-enc-full: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+	$(CFLAGS) $(LDFLAGS)
+
+# Same as unit-update-flash-enc-full but with SWAP in internal flash
+# (NO_SWAP_EXT=1), where the swap keeps the UPDATE sector as plaintext.
+unit-update-flash-enc-intswap:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN -DUNIT_TEST_AUTH \
+	-DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED -DEXT_FLASH -DPART_UPDATE_EXT \
+	-DEXT_ENCRYPTED -DENCRYPT_WITH_CHACHA -DHAVE_CHACHA \
+	-DCUSTOM_ENCRYPT_KEY \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT -DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-flash-enc-intswap: ../../include/target.h unit-update-flash.c
+	gcc -o $@ unit-update-flash.c ../../src/image.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+	$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+	$(CFLAGS) $(LDFLAGS)
+
+# The execute-in-place installer. DISABLE_BACKUP is what COMPRESSED_UPDATE
+# implies in options.mk; the asymmetric update partition is the layout the
+# mode exists for, and nothing else in the tree exercises it.
+unit-compressed-install:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DDISABLE_BACKUP -DWOLFBOOT_COMPRESSED_UPDATE \
+	-DWOLFBOOT_GZIP -DWOLFBOOT_GZIP_SINK \
+	-DWOLFBOOT_COMPRESSED_WINDOW_BITS=12 \
+	-DWOLFBOOT_PARTITION_UPDATE_SIZE=0x4000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+# The same installer on flash that programs whole 32-byte units only, as the
+# AURIX TC3xx does. 4 KB sectors, because the journal must be able to log a
+# full-partition update.
+unit-compressed-install-ecc:CFLAGS+=-DMOCK_PARTITIONS -DWOLFBOOT_NO_SIGN \
+	-DUNIT_TEST_AUTH -DWOLFBOOT_HASH_SHA256 -DPRINTF_ENABLED \
+	-DDISABLE_BACKUP -DWOLFBOOT_COMPRESSED_UPDATE \
+	-DWOLFBOOT_GZIP -DWOLFBOOT_GZIP_SINK \
+	-DWOLFBOOT_COMPRESSED_WINDOW_BITS=12 \
+	-DWOLFBOOT_PARTITION_UPDATE_SIZE=0x4000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE \
+	-DNVM_FLASH_JOURNAL -DNVM_FLASH_ECC -DWOLFBOOT_FLASH_WRITE_UNIT=32 \
+	-DWOLFBOOT_SECTOR_SIZE=0x1000 -DIMAGE_HEADER_SIZE=256
+
+unit-compressed-install: ../../include/target.h unit-compressed-install.c
+	gcc -o $@ unit-compressed-install.c ../../src/image.c ../../src/gzip.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-compressed-install-ecc: ../../include/target.h unit-compressed-install.c
+	gcc -o $@ unit-compressed-install.c ../../src/image.c ../../src/gzip.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-compressed-tlv: ../../include/target.h unit-compressed-tlv.c
+	gcc -o $@ unit-compressed-tlv.c ../../src/image.c ../../src/gzip.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram: ../../include/target.h unit-update-ram.c
+	gcc -o $@ unit-update-ram.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+# Loader-level coverage for the kernel-only-FIT device-tree fallback and the
+# deferred initrd fixup; the FDT/FIT API is stubbed inside the test.
+unit-update-ram-fit: ../../include/target.h unit-update-ram-fit.c
+	gcc -o $@ unit-update-ram-fit.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-uboot: ../../include/target.h unit-update-ram-uboot.c
+	gcc -o $@ unit-update-ram-uboot.c ../../src/image.c ../../src/gpt.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-enc: ../../include/target.h unit-update-ram-enc.c
+	gcc -o $@ unit-update-ram-enc.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-enc-nopart: ../../include/target.h unit-update-ram-enc.c
+	gcc -o $@ unit-update-ram-enc.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-nofixed: ../../include/target.h unit-update-ram-nofixed.c
+	gcc -o $@ unit-update-ram-nofixed.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-nofixed-noramboot: ../../include/target.h unit-update-ram-nofixed-noramboot.c
+	gcc -o $@ unit-update-ram-nofixed-noramboot.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-noramboot: ../../include/target.h unit-update-ram-noramboot.c
+	gcc -o $@ unit-update-ram-noramboot.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-ram-custom-trailer: ../../include/target.h unit-update-ram-custom-trailer.c
+	gcc -o $@ unit-update-ram-custom-trailer.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-custom-trailer-nopart: ../../include/target.h unit-custom-trailer-nopart.c
+	gcc -o $@ unit-custom-trailer-nopart.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-flash-hwswap: ../../include/target.h unit-update-flash-hwswap.c
+	gcc -o $@ unit-update-flash-hwswap.c ../../src/image.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk: ../../include/target.h unit-update-disk.c
+	gcc -o $@ unit-update-disk.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-confirm: ../../include/target.h unit-update-disk-confirm.c
+	gcc -o $@ unit-update-disk-confirm.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-golden: ../../include/target.h unit-update-disk-golden.c
+	gcc -o $@ unit-update-disk-golden.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-failover: ../../include/target.h unit-update-disk-failover.c
+	gcc -o $@ unit-update-disk-failover.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-golden-enckey: ../../include/target.h unit-update-disk-golden-enckey.c
+	gcc -o $@ unit-update-disk-golden-enckey.c $(CFLAGS) $(LDFLAGS)
+
+# WOLFBOOT_FSP (x86) boot path of update_disk.c: the low-memory (tolum)
+# size check must reject a slot and fall back to the other one, like every
+# other per-slot rejection in the retry loop.
+unit-update-disk-fsp:CFLAGS+=-DMOCK_PARTITIONS -DPRINTF_ENABLED -DWOLFBOOT_FSP \
+	-DUCODE0_ADDRESS=0 -DWOLFBOOT_LOAD_BASE=0x100000 \
+	-DWOLFBOOT_ORIGIN=MOCK_ADDRESS_BOOT \
+	-DBOOTLOADER_PARTITION_SIZE=WOLFBOOT_PARTITION_SIZE
+unit-update-disk-fsp: ../../include/target.h unit-update-disk-fsp.c
+	gcc -o $@ unit-update-disk-fsp.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-oob: ../../include/target.h unit-update-disk-oob.c
+	gcc -o $@ unit-update-disk-oob.c $(CFLAGS) $(LDFLAGS)
+
+# Disk loader reading its image from a file. Mocks only the raw block
+# layer, so the real gpt/disk/disk_fs/fat32/ext4 stack runs underneath.
+unit-update-disk-fs: ../../include/target.h unit-update-disk-fs.c
+	gcc -o $@ unit-update-disk-fs.c $(CFLAGS) $(LDFLAGS)
+
+# Same source with disk encryption compiled in. The mock cipher's keystream
+# depends on the byte's position in the image, so this pins the fact that a
+# file's byte stream lines up with the CTR counter exactly as a raw
+# partition's does -- a wrong IV or offset would decrypt to garbage.
+unit-update-disk-fs-enc: ../../include/target.h unit-update-disk-fs.c
+	gcc -o $@ unit-update-disk-fs.c $(CFLAGS) $(LDFLAGS)
+
+unit-update-disk-fit: ../../include/target.h unit-update-disk-fit.c
+	gcc -o $@ unit-update-disk-fit.c $(CFLAGS) $(LDFLAGS)
+
+# Same source with MMU and FIT_RAMDISK on: the device-tree fallback and the
+# deferred initrd fixup both live under #ifdef MMU in update_disk.c.
+unit-update-disk-fit-ramdisk: ../../include/target.h unit-update-disk-fit.c
+	gcc -o $@ unit-update-disk-fit.c $(CFLAGS) -DWOLFBOOT_FIT_RAMDISK -DMMU $(LDFLAGS)
+
+unit-pkcs11_store: ../../include/target.h unit-pkcs11_store.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-pkcs11_store.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-pkcs11_store-stalecache: ../../include/target.h unit-pkcs11_store.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-pkcs11_store.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-psa_store: ../../include/target.h unit-psa_store.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-psa_store.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+unit-wolfhsm_flash_hal:CFLAGS+=-I$(WOLFBOOT_LIB_WOLFHSM) -DWOLFCRYPT_TZ_WOLFHSM -DWOLFHSM_CFG_NO_SYS_TIME -DMOCK_PARTITIONS
+unit-wolfhsm_flash_hal:WOLFCRYPT_SRC:=$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+                                     $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/misc.c
+unit-wolfhsm_flash_hal: ../../include/target.h unit-wolfhsm_flash_hal.c
+	gcc -o $@ $(WOLFCRYPT_SRC) unit-wolfhsm_flash_hal.c $(CFLAGS) $(WOLFCRYPT_CFLAGS) $(LDFLAGS)
+
+gpt-sfdisk-test.h:
+	truncate -s 131072 .gpt-tmp.img
+	printf 'label: gpt\nfirst-lba: 34\nstart=34, size=67, name="boot"\nstart=101, size=100, name="rootfs"\n' \
+		| sfdisk --no-reread --no-tell-kernel .gpt-tmp.img >/dev/null 2>&1
+	dd if=.gpt-tmp.img bs=512 count=3 of=gpt_sfdisk_data 2>/dev/null
+	(echo '/* Generated — do not edit. Regenerate: make gpt-sfdisk-test.h */'; \
+	 xxd -i gpt_sfdisk_data | sed 's/^unsigned/static const unsigned/') > $@
+	rm -f .gpt-tmp.img gpt_sfdisk_data
+
+unit-disk: unit-disk.c gpt-sfdisk-test.h
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS)
+
+# Backend-independent half of the read-only filesystem layer. Built with
+# neither WOLFBOOT_FAT32 nor WOLFBOOT_EXT4, so it also pins the behaviour
+# of a DISK_FS build with no parser selected: everything probes as raw.
+unit-fs-probe: ../../include/target.h unit-fs-probe.c
+	gcc -o $@ unit-fs-probe.c $(CFLAGS) -DWOLFBOOT_DISK_FS $(LDFLAGS)
+
+# Hostile-input coverage for every parser bound. Builds all of its
+# metadata in C, so unlike the interop suites it is never skipped.
+unit-fs-malicious: ../../include/target.h unit-fs-malicious.c
+	gcc -o $@ unit-fs-malicious.c $(CFLAGS) -DWOLFBOOT_DISK_FS \
+		-DWOLFBOOT_FAT32 -DWOLFBOOT_EXT4 $(LDFLAGS)
+
+# A conformant FAT32 volume needs at least 65525 clusters, so even with
+# one 512-byte sector per cluster the smallest valid image is about 33 MB.
+# That is far too large to embed as a C array the way gpt-sfdisk-test.h
+# does, so the image stays a file and the test reads it through a
+# file-backed mock disk_read().
+fat32-test.img:
+	rm -f $@ $@.tmp fat32-payload.bin fat32-nested.bin fat32-short.bin
+	truncate -s 40M $@.tmp
+	mkfs.vfat -F 32 -s 1 -S 512 -n WBTEST $@.tmp >/dev/null
+	head -c 1048576 /dev/urandom > fat32-payload.bin
+	head -c 4096 /dev/urandom > fat32-nested.bin
+	head -c 777 /dev/urandom > fat32-short.bin
+	MTOOLS_SKIP_CHECK=1 mmd -i $@.tmp ::/boot
+	MTOOLS_SKIP_CHECK=1 mmd -i $@.tmp ::/boot/sub
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@.tmp fat32-payload.bin \
+		::/boot/a-very-long-image-name-for-lfn.itb
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@.tmp fat32-nested.bin \
+		::/boot/sub/nested.bin
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@.tmp fat32-short.bin ::/SHORT.BIN
+	# 60 characters, so five LFN entries. Names of 53-64 characters fit
+	# WOLFBOOT_FS_MAX_NAME but need the fifth entry, which is the band a
+	# too-eager ordinal bound silently drops.
+	MTOOLS_SKIP_CHECK=1 mcopy -i $@.tmp fat32-nested.bin \
+		"::/boot/a-deliberately-long-filename-that-needs-five-lfn-entries.itb"
+	mv $@.tmp $@
+
+unit-fat32: ../../include/target.h unit-fat32.c fat32-test.img
+	gcc -o $@ unit-fat32.c $(CFLAGS) -DWOLFBOOT_DISK_FS -DWOLFBOOT_FAT32 \
+		$(LDFLAGS)
+
+# Two ext4 fixtures. The first uses the smallest feature set the parser
+# accepts; the second uses mke2fs's stock ext4 profile, which on a current
+# e2fsprogs sets 64bit + metadata_csum + flex_bg -- that one is what proves
+# a plain "mkfs.ext4" volume is readable. "mke2fs -d" populates from a
+# directory with no root privileges and no loop mount (e2fsprogs >= 1.43).
+ext4-fixtures.stamp:
+	rm -rf .ext4-root ext4-min.img ext4-stock.img
+	mkdir -p .ext4-root/boot/sub
+	( head -c 4096 /dev/urandom; head -c 61440 /dev/zero; \
+	  head -c 262144 /dev/urandom; head -c 131072 /dev/zero; \
+	  head -c 589824 /dev/urandom ) > ext4-payload.bin
+	head -c 4096 /dev/urandom > ext4-nested.bin
+	cp ext4-payload.bin .ext4-root/boot/image.itb
+	cp ext4-nested.bin .ext4-root/boot/sub/nested.bin
+	mke2fs -q -F -t ext4 -O ^64bit,^metadata_csum -b 1024 -I 128 \
+		-L WBEXT1 -d .ext4-root ext4-min.img 16384 2>/dev/null
+	mke2fs -q -F -t ext4 -b 4096 -L WBEXT2 -d .ext4-root \
+		ext4-stock.img 8192 2>/dev/null
+	rm -rf .ext4-root
+	touch $@
+
+unit-ext4: ../../include/target.h unit-ext4.c ext4-fixtures.stamp
+	gcc -o $@ unit-ext4.c $(CFLAGS) -DWOLFBOOT_DISK_FS -DWOLFBOOT_EXT4 \
+		$(LDFLAGS)
+
+unit-multiboot: unit-multiboot.c
+	gcc -o $@ unit-multiboot.c $(CFLAGS) $(LDFLAGS)
+
+unit-x86-paging-oob: ../../include/target.h unit-x86-paging-oob.c
+	gcc -o $@ unit-x86-paging-oob.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-ahci-unlock-panic: ../../include/target.h unit-ahci-unlock-panic.c
+	gcc -o $@ unit-ahci-unlock-panic.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-ata-security-passphrase-zeroize: ../../include/target.h unit-ata-security-passphrase-zeroize.c
+	gcc -o $@ unit-ata-security-passphrase-zeroize.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+unit-ata-sector-io: ../../include/target.h unit-ata-sector-io.c ../../src/x86/ata.c
+	gcc -o $@ unit-ata-sector-io.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# unit-flash-write-cc26x2 includes hal/cc26x2.c directly, with cc26x2_ti_stub/
+# standing in for the (not vendored) TI CC26x2 SDK headers it includes. This
+# is also the only build coverage hal/cc26x2.c has.
+unit-flash-write-cc26x2: ../../include/target.h unit-flash-write-cc26x2.c ../../hal/cc26x2.c
+	gcc -o $@ unit-flash-write-cc26x2.c -Icc26x2_ti_stub $(CFLAGS) $(LDFLAGS)
+
+# unit-p1021-fcm-bytes drives the real FCM byte-copy helpers from
+# hal/nxp_p1021.c (PowerPC). The P1021 FCM helpers are plain memory
+# copies, so the HAL is compiled on the host: the PowerPC-asm accessors
+# from nxp_ppc.h are shadowed inside the test, and nxp_p1021_host.c
+# (generated below) is identical to hal/nxp_p1021.c except that the three
+# bare __asm__ cache-barrier statements (DDR init / multi-core boot) are
+# blanked out, as they cannot assemble on x86.
+nxp_p1021_host.c: ../../hal/nxp_p1021.c
+	sed -e 's/^[[:space:]]*__asm__[[:space:]]*__volatile__("[^"]*");[[:space:]]*$$//' $< > $@
+
+unit-p1021-fcm-bytes: unit-p1021-fcm-bytes.c nxp_p1021_host.c
+	gcc -o $@ unit-p1021-fcm-bytes.c -DTARGET_nxp_p1021 -I../../hal $(CFLAGS) $(LDFLAGS)
+
+# unit-ls1028a-xspi-write drives the real XSPI write/erase path from
+# hal/nxp_ls1028a.c. The driver is plain C register access apart from a
+# few bare `asm volatile("...")` barrier statements (DDR init, delay), so
+# nxp_ls1028a_host.c (generated below) is identical to the HAL file
+# except those statements are blanked out: they cannot assemble on x86.
+# The test rebases XSPI_BASE onto host memory and emulates the FlexSPI
+# controller (including the NOR write-enable latch) at the
+# XSPI_IPCMD_START() boundary.
+nxp_ls1028a_host.c: ../../hal/nxp_ls1028a.c
+	sed -e 's/^[[:space:]]*asm volatile("[^"]*");[[:space:]]*$$//' \
+	    -e 's/\*(volatile uint32_t \*)(addr) = val;/xspi_emu_tfd_write(addr, val);/' \
+	    $< > $@
+
+unit-ls1028a-xspi-write: unit-ls1028a-xspi-write.c nxp_ls1028a_host.c
+	gcc -o $@ unit-ls1028a-xspi-write.c -DTARGET_nxp_ls1028a -I../../hal $(CFLAGS) $(LDFLAGS)
+
+# unit-zynq-erase-loop runs the real ext_flash_erase() from hal/zynq.c
+# against emulated qspi_* functions. zynq.c needs the Xilinx SDK headers
+# (board build tree) and cannot be compiled on the host, but the bug
+# under test is entirely in this one function, so it is extracted
+# verbatim by sed into zynq_erase_extract.h.
+zynq_erase_extract.h: ../../hal/zynq.c
+	sed -n '/^int RAMFUNCTION ext_flash_erase(/,/^}/p' $< > $@
+
+unit-zynq-erase-loop: unit-zynq-erase-loop.c zynq_erase_extract.h
+	gcc -o $@ unit-zynq-erase-loop.c $(CFLAGS) $(LDFLAGS)
+
+# unit-ct-compare runs the WOLFBOOT_ARMORED image_CT_compare() self-check
+# at the 32-bit witness wrap boundary (len >= 65536). image.c drags in
+# the full image dependency tree, so the ARMORED function (the first
+# definition in the file) is extracted verbatim.
+ct_compare_extract.h: ../../src/image.c
+	sed -n '/^int NOINLINEFUNCTION image_CT_compare(/,/^}/p' $< \
+	    | sed -n '1,/^}/p' > $@
+
+unit-ct-compare: unit-ct-compare.c ct_compare_extract.h
+	gcc -o $@ unit-ct-compare.c $(CFLAGS) $(LDFLAGS)
+
+# unit-zynqmp-bbram-crc checks the BBRAM key CRC against vectors produced by
+# the Xilinx XilSKey implementation. The programmed key cannot be read back,
+# so this CRC is the only verification the controller offers. hal/zynq.c pulls
+# in the whole ZynqMP HAL, so the pure helpers are extracted verbatim, along
+# with the constants and the brick mask they depend on.
+bbram_crc_extract.h: ../../hal/zynq.c ../../hal/zynq.h
+	sed -n '/^#define ZYNQMP_EFUSE_SEC_CTRL_PPK1_INVLD/,/^#define ZYNQMP_EFUSE_SEC_CTRL_AES_RDLK/p' ../../hal/zynq.h > $@
+	sed -n '/^#define ZYNQMP_EFUSE_SEC_CTRL_BRICK_MASK/,/AES_RDLK)/p' ../../hal/zynq.h >> $@
+	grep -E '^#define ZYNQMP_EFUSE_(ROW|PAGE)_SEC_CTRL' ../../hal/zynq.h >> $@
+	grep -E '^#define ZYNQMP_BBRAM_(CRC_POLY|CRC_ROW_BITS|KEY_WORDS)' ../../hal/zynq.h >> $@
+	sed -n '/^static uint32_t zynqmp_bbram_row_crc(/,/^}/p' ../../hal/zynq.c >> $@
+	sed -n '/^uint32_t zynqmp_bbram_key_crc(/,/^}/p' ../../hal/zynq.c >> $@
+	sed -n '/^void zynqmp_bbram_key_words(/,/^}/p' ../../hal/zynq.c >> $@
+	sed -n '/^int zynqmp_efuse_is_brick_fuse(/,/^}/p' ../../hal/zynq.c >> $@
+
+
+unit-zynqmp-bbram-crc: unit-zynqmp-bbram-crc.c bbram_crc_extract.h
+	gcc -o $@ unit-zynqmp-bbram-crc.c $(CFLAGS) $(LDFLAGS)
+
+# unit-zynqmp-efuse-guards covers the fail-secure guards that gate irreversible
+# eFuse writes and BBRAM key programming. Those paths are MMIO-bound, so the
+# test backs pmu_mmio_* with a fake register file and the functions under test
+# are extracted verbatim from hal/zynq.c.
+efuse_guards_extract.h: ../../hal/zynq.c ../../hal/zynq.h
+	sed -n '/^typedef struct zynqmp_sec_state {/,/^} zynqmp_sec_state;/p' $< > $@
+	sed -n '/^static int zynqmp_sec_state_get(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_sec_policy_check(/,/^}/p' $< >> $@
+	sed -n '/^static uint32_t zynqmp_sysmon_raw(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_efuse_prog_allowed(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_efuse_is_brick_fuse(/,/^}/p' $< >> $@
+	sed -n '/^#ifdef ZYNQMP_EFUSE_BURN$$/,/^#endif \/\* ZYNQMP_EFUSE_BURN \*\/$$/p' $< >> $@
+	sed -n '/^int zynqmp_efuse_write_bit(/,/^}/p' $< >> $@
+	sed -n '/^static uint32_t zynqmp_bbram_row_crc(/,/^}/p' $< >> $@
+	sed -n '/^uint32_t zynqmp_bbram_key_crc(/,/^}/p' $< >> $@
+	sed -n '/^void zynqmp_bbram_key_words(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_bbram_status(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_bbram_zeroize(/,/^}/p' $< >> $@
+	sed -n '/^int zynqmp_bbram_program(/,/^}/p' $< >> $@
+
+unit-zynqmp-efuse-guards: unit-zynqmp-efuse-guards.c efuse_guards_extract.h ../../hal/zynq.h
+	gcc -o $@ unit-zynqmp-efuse-guards.c $(CFLAGS) -I../.. $(LDFLAGS)
+
+# Same source, compiled with the program strobe enabled, so the burn-only
+# error paths (T-bit refusal, program timeout, cache-reload timeout) and the
+# PGM_EN/WR_LOCK cleanup are covered as well as report-only behaviour.
+unit-zynqmp-efuse-burn: unit-zynqmp-efuse-guards.c efuse_guards_extract.h ../../hal/zynq.h
+	gcc -o $@ unit-zynqmp-efuse-guards.c $(CFLAGS) -I../.. -DZYNQMP_EFUSE_BURN $(LDFLAGS)
+
+# unit-zynqmp-puf covers the PUF regeneration gate and the black-key unwrap.
+# Both are MMIO-bound, so the test stubs pmu_mmio_* and the CSU AES entry
+# points, and the functions under test are extracted verbatim from hal/zynq.c.
+puf_extract.h: ../../hal/zynq.c ../../hal/zynq.h
+	sed -n '/^int csu_puf_regeneration(/,/^}/p' ../../hal/zynq.c > $@
+	sed -n '/^int csu_puf_black_key_unwrap(/,/^}/p' ../../hal/zynq.c >> $@
+
+unit-zynqmp-puf: unit-zynqmp-puf.c puf_extract.h ../../hal/zynq.h
+	gcc -o $@ unit-zynqmp-puf.c $(CFLAGS) -I../.. $(LDFLAGS)
+
+# The CHASH gate only exists in the FSBL variant, so the other branch of
+# csu_puf_regeneration() needs its own compilation to be covered.
+unit-zynqmp-puf-nofsbl: unit-zynqmp-puf.c puf_extract.h ../../hal/zynq.h
+	gcc -o $@ unit-zynqmp-puf.c $(CFLAGS) -I../.. -DPUF_TEST_NO_FSBL $(LDFLAGS)
+
+# unit-zynq-ext-write runs the real ext_flash_write() from hal/zynq.c
+# (page chunks crossed physical NOR page boundaries and the
+# wrap clobbered the page start). Same extraction approach as the
+# erase test; the emulated NOR models the wrap.
+zynq_write_extract.h: ../../hal/zynq.c
+	sed -n '/^int RAMFUNCTION ext_flash_write(/,/^}/p' $< > $@
+
+unit-zynq-ext-write: unit-zynq-ext-write.c zynq_write_extract.h
+	gcc -o $@ unit-zynq-ext-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-sama5d3-ext-read runs the real ext_flash_read() from hal/sama5d3.c
+# (the intra-page offset of the start address was never applied, sub-page
+# reads were copied in 32-bit words, and a multi-page read ending
+# mid-page wrote a full page past the caller's buffer). The function and
+# the nand_flash geometry struct are extracted verbatim; the test provides
+# host div_u()/mod() and emulated nand_read_page()/nand_check_bad_block()
+# backed by a byte array.
+sama5d3_read_extract.h: ../../hal/sama5d3.c
+	sed -n '/^struct nand_flash {/,/^} nand_flash = { 0 };/p' $< > $@
+	sed -n '/^int ext_flash_read(/,/^}/p' $< >> $@
+
+unit-sama5d3-ext-read: unit-sama5d3-ext-read.c sama5d3_read_extract.h
+	gcc -o $@ unit-sama5d3-ext-read.c $(CFLAGS) $(LDFLAGS)
+
+# unit-versal-qspi-dma drives the real DMA RX path of qspi_transfer() in
+# hal/versal.c (an unaligned read larger than the 4096-byte
+# temp buffer copied the full requested length out of the buffer). The
+# generated host copies differ from the real files only in:
+#   - ARM asm statements blanked (cannot assemble on x86; the cache
+#     maintenance helpers become no-ops, which is harmless because the
+#     test emulates the DMA);
+#   - VERSAL_QSPI_BASE rebased onto host memory (register offsets kept);
+#   - the real qspi_dma_wait() renamed to qspi_dma_wait_hw() so the test
+#     can provide a qspi_dma_wait() that performs the DMA move;
+# The test is built with -DTARGET_versal -DEXT_FLASH -DARCH_AARCH64
+# -DARCH_64BIT (the file is guarded by TARGET_versal, the QSPI section by
+# EXT_FLASH, and the architecture check / hal.h prototypes by the ARCH
+# defines).
+# Only operand-less asm (barriers) may be deleted outright. An asm with
+# an output operand must be replaced by an assignment, or the generated
+# copy reads an uninitialised automatic -- undefined behaviour, and at
+# -O0 a guaranteed infinite loop in the timer helpers.
+# hal/versal.c now gets its counter accessors from include/aarch64_arch.h.
+# The generator only rewrites the .c and .h it copies, so the header needs the
+# same treatment: its "mrs" reads have output operands and must become
+# assignments, not deletions (see the note above versal_host.h).
+aarch64_arch_host.h: ../../include/aarch64_arch.h
+	sed -E -e 's/__asm__ volatile\("mrs %0, CurrentEL" : "=r"\(el\) : : "cc"\);/el = 3UL << 2;/' \
+	    -e 's/__asm__ volatile\("mrs %0, cntpct_el0" : "=r" \(cntpct\)\);/cntpct = ++versal_host_ticks;/' \
+	    -e 's/__asm__ volatile\("mrs %0, cntfrq_el0" : "=r" \(cntfrq\)\);/cntfrq = 1000000ULL;/' \
+	    -e 's/__asm__ volatile\("mrs %0, clidr_el1" : "=r"\(clidr\)\);/clidr = 0; \/* host: report no cache levels, so the walk is a no-op *\//' \
+	    -e 's/__asm__ volatile\("mrs %0, ccsidr_el1" : "=r"\(ccsidr\)\);/ccsidr = 0;/' \
+	    -e 's/__asm__ volatile\("dc (cisw|isw), %0" :: "r"\(val\)\);/(void)val;/' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"\);[[:space:]]*//' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"[[:space:]]*:[[:space:]]*:[^;]*\);[[:space:]]*//' $< > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: un-handled asm (an output operand needs an explicit rewrite above)"; grep -n '__asm__' $@; false; }
+
+versal_host.h: ../../hal/versal.h
+	sed -E -e 's/0xF1030000UL/((uintptr_t)g_vqspi_regs)/' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"\);[[:space:]]*//' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"[[:space:]]*:[[:space:]]*:[^;]*\);[[:space:]]*//' $< > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: un-handled asm (an output operand needs an explicit rewrite above)"; grep -n '__asm__' $@; false; }
+
+# See versal_host.h above for why the two "mrs" reads are rewritten
+# rather than deleted. The host counter advances one tick per read at a
+# nominal 1 MHz, so hal_delay_us() terminates instead of spinning.
+versal_host.c: ../../hal/versal.c versal_host.h aarch64_arch_host.h
+	sed -E -e 's|#include "hal/versal.h"|#include "versal_host.h"\nstatic uint64_t versal_host_ticks;|' \
+	    -e 's|#include "aarch64_arch.h"|#include "aarch64_arch_host.h"|' \
+	    -e 's/__asm__ volatile\("mrs %0, cntpct_el0" : "=r" \(cntpct\)\);/cntpct = ++versal_host_ticks;/' \
+	    -e 's/__asm__ volatile\("mrs %0, cntfrq_el0" : "=r" \(cntfrq\)\);/cntfrq = 1000000ULL;/' \
+	    -e 's/^static int qspi_dma_wait\(void\)$$/static int qspi_dma_wait_hw(void)/' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"\);[[:space:]]*//' \
+	    -e 's/^[[:space:]]*__asm__[[:space:]]+(__)?(volatile__|volatile)\("[^"]*"[[:space:]]*:[[:space:]]*:[^;]*\);[[:space:]]*//' $< > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: un-handled asm (an output operand needs an explicit rewrite above)"; grep -n '__asm__' $@; false; }
+
+# unit-imx8qm-usdhc-shim drives the real uSDHC-to-SDHCI translation from
+# hal/imx_usdhc_sdhci.c (shared by imx8qm and imx8mm) against an emulated
+# register file, built with the imx8qm header (which brings the shim's macros
+# in hal/imx_usdhc_sdhci.h). The shim block is extracted verbatim, without the
+# includes and MMIO helpers above it, so the test substitutes its own rd32/wr32
+# and timer.
+# The trailing #endif of the enclosing "#if defined(DISK_SDCARD) ..." is
+# dropped, since its opening #if is outside the extracted range.
+#
+# The anchors are literal source lines, so a refactor can move them. "test -s"
+# catches an anchor that stops matching, but not a range that still matches
+# and silently truncates, so each rule also asserts the entry points its test
+# drives are present. Two details of that form matter: the assertion exits
+# rather than returning false, since a false in a for-body is discarded by the
+# next iteration's status and only the last item would fail the build; and it
+# matches the call syntax, since a bare name still matches a renamed one.
+imx8qm_usdhc_extract.h: ../../hal/imx_usdhc_sdhci.c
+	sed -n '/^\/\* Fields the driver reads back that uSDHC does not implement. \*\/$$/,/^#endif \/\* DISK_SDCARD || DISK_EMMC \*\/$$/p' $< \
+	    | sed '/^#endif \/\* DISK_SDCARD || DISK_EMMC \*\/$$/d' > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: unexpected asm in the extracted shim"; false; }
+	@for f in 'sdhci_reg_read(' 'sdhci_reg_write(' 'sdhci_platform_init(' \
+	          'sdhci_platform_set_clock('; do \
+	    grep -qF "$$f" $@ || { echo "$@: '$$f' missing - the extraction anchors no longer bracket the whole shim"; exit 1; }; \
+	done
+
+unit-imx8qm-usdhc-shim: unit-imx8qm-usdhc-shim.c imx8qm_usdhc_extract.h
+	gcc -o $@ unit-imx8qm-usdhc-shim.c -I../../hal $(CFLAGS) $(LDFLAGS)
+
+# unit-imx8qm-flexspi-write drives the real FlexSPI NOR driver from
+# hal/imx8qm.c against an emulated controller and NOR device. Extracted rather
+# than host-copied for the same reason as the uSDHC shim above.
+imx8qm_flexspi_extract.h: ../../hal/imx8qm.c
+	sed -n '/^#define FSPI_REG(off)/,/^#endif \/\* EXT_FLASH \*\/$$/p' $< \
+	    | sed '/^#endif \/\* EXT_FLASH \*\/$$/d' > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: unexpected asm in the extracted driver"; false; }
+	@for f in 'flexspi_init(' 'ext_flash_read(' 'ext_flash_write(' \
+	          'ext_flash_erase(' 'ext_flash_unlock('; do \
+	    grep -qF "$$f" $@ || { echo "$@: '$$f' missing - the extraction anchors no longer bracket the whole driver"; exit 1; }; \
+	done
+
+unit-imx8qm-flexspi-write: unit-imx8qm-flexspi-write.c imx8qm_flexspi_extract.h
+	gcc -o $@ unit-imx8qm-flexspi-write.c -I../../hal $(CFLAGS) $(LDFLAGS)
+
+# unit-imx95-ele drives the real ELE mailbox transport from
+# hal/imx95_a55_stage1.c against an emulated MU. Extracted rather than
+# host-copied for the same reason as the i.MX8QM rules above; the barrier and
+# the CNTFRQ_EL0 read are rewritten, since a host has neither.
+imx95_ele_extract.h: ../../hal/imx95_a55_stage1.c
+	{ sed -n '/^#define ELE_MU_PAR /,/^#define ELE_CALL_BROKEN /p' $<; echo; \
+	  sed -n '/^#define ELE_TIMER_PROBE_LOOPS /,/^#define ELE_MU_POLL_LOOPS /p' $<; echo; \
+	  sed -n '/^\/\* Returns 0 when the system counter is not advancing/,/^static void ele_report(/p' $< \
+	    | sed '/^static void ele_report(/d'; } \
+	  | sed -e 's/__asm__ volatile("dsb sy" ::: "memory");/ELE_BARRIER();/' \
+	        -e 's/__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(hz));/hz = ELE_TEST_CNTFRQ;/' > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: unexpected asm in the extracted transport"; false; }
+	@for m in 'ELE_BARRIER();' 'hz = ELE_TEST_CNTFRQ;'; do \
+	    grep -qF "$$m" $@ || { echo "$@: the rewrite for '$$m' no longer matches"; exit 1; }; \
+	done
+	@for f in 'static uint64_t timer_deadline(' 'static int mu_wait(' \
+	          'static int ele_call(' '#define ELE_MU_PAR ' '#define ELE_MU_TR(' \
+	          '#define ELE_MU_RR(' '#define ELE_TIMER_PROBE_LOOPS ' \
+	          '#define ELE_MU_POLL_LOOPS ' '#define ELE_CALL_BROKEN '; do \
+	    grep -qF "$$f" $@ || { echo "$@: '$$f' missing - the extraction anchors no longer bracket the whole transport"; exit 1; }; \
+	done
+
+unit-imx95-ele: unit-imx95-ele.c imx95_ele_extract.h
+	gcc -o $@ unit-imx95-ele.c $(CFLAGS) $(LDFLAGS)
+
+# unit-imx95-disk drives the real byte-addressed disk_read() from
+# hal/imx95_a55.c against an emulated card, checking where each byte lands and
+# the bounce-buffer paths rather than just the returned length.
+imx95_disk_extract.h: ../../hal/imx95_a55.c
+	sed -n '/^\/\* Byte-addressed (src\/disk.c passes byte offsets)/,/^\/\* Not implemented: nothing in the boot path writes. \*\/$$/p' $< \
+	    | sed '/^\/\* Not implemented: nothing in the boot path writes. \*\/$$/d' > $@
+	test -s $@
+	@! grep -q '__asm__' $@ || { echo "$@: unexpected asm in the extracted reader"; false; }
+	@for f in 'int disk_read(' 'card_ready' 'sd_read_blocks(' 'SD_BLOCK_SIZE' \
+	          'SD_MAX_BLOCKS'; do \
+	    grep -qF "$$f" $@ || { echo "$@: '$$f' missing - the extraction anchors no longer bracket disk_read"; exit 1; }; \
+	done
+
+unit-imx95-disk: unit-imx95-disk.c imx95_disk_extract.h
+	gcc -o $@ unit-imx95-disk.c $(CFLAGS) $(LDFLAGS)
+
+unit-versal-qspi-dma: unit-versal-qspi-dma.c versal_host.c
+	gcc -o $@ unit-versal-qspi-dma.c -DTARGET_versal -DEXT_FLASH -DARCH_AARCH64 -DARCH_64BIT $(CFLAGS) $(LDFLAGS)
+
+# unit-versal-ext-write runs the real ext_flash_write() from
+# hal/versal.c (page chunks crossed physical NOR page
+# boundaries and the wrap clobbered the page start). The QspiDev_t
+# struct and the function are extracted verbatim (the qspi_* helpers
+# are file-static, so the test provides emulated ones); the emulated
+# NOR models the wrap.
+versal_qspidev_extract.h: ../../hal/versal.c
+	sed -n '/^\/\* QSPI device structure \*\//,/^} QspiDev_t;/p' $< > $@
+
+versal_ext_write_extract.h: ../../hal/versal.c
+	sed -n '/^int ext_flash_write(/,/^}/p' $< > $@
+
+unit-versal-ext-write: unit-versal-ext-write.c versal_qspidev_extract.h versal_ext_write_extract.h versal_host.h
+	gcc -o $@ unit-versal-ext-write.c -DEXT_FLASH -DARCH_AARCH64 -DARCH_64BIT $(CFLAGS) $(LDFLAGS)
+
+# unit-versal-wdt drives the real WWDT routines from hal/versal.c against an
+# emulated register file, with the register defines coming from the generated
+# host copy of hal/versal.h. The functions are extracted verbatim rather than
+# host-copying the whole HAL: the test models the hardware's closed/open
+# windows and bad events, which it does from its own dsb().
+versal_wdt_extract.h: ../../hal/versal.c
+	sed -n '/^static int versal_wwdt_wait_open(/,/^}/p' $< > $@
+	sed -n '/^static int versal_wwdt_stop(/,/^}/p' $< >> $@
+	sed -n '/^static int versal_wwdt_arm(/,/^}/p' $< >> $@
+	sed -n '/^void RAMFUNCTION wolfBoot_watchdog_feed(/,/^}/p' $< >> $@
+	test -s $@
+	@for f in versal_wwdt_wait_open versal_wwdt_arm versal_wwdt_stop \
+		wolfBoot_watchdog_feed; do grep -q "$$f(" $@ || \
+		{ echo "$@: $$f not extracted"; false; }; done
+
+unit-versal-wdt: unit-versal-wdt.c versal_wdt_extract.h versal_host.h
+	gcc -o $@ unit-versal-wdt.c -DTARGET_versal $(CFLAGS) $(LDFLAGS)
+
+# unit-versal-uart-rx runs the real uart_rx() from hal/versal.c against
+# an emulated PL011 register block. UART_REG() resolves to an absolute
+# MMIO address, so the function is extracted verbatim and the test
+# redefines the accessor over a local array.
+versal_uart_rx_extract.h: ../../hal/versal.c
+	sed -n '/^int uart_rx(/,/^}/p' $< > $@
+	test -s $@
+
+unit-versal-uart-rx: unit-versal-uart-rx.c versal_uart_rx_extract.h versal_host.h
+	gcc -o $@ unit-versal-uart-rx.c -DARCH_AARCH64 -DARCH_64BIT $(CFLAGS) $(LDFLAGS)
+
+# unit-raspi3-uart-rx runs the real uart_rx() from hal/raspi3.c, the
+# other PL011 console in the tree, against an emulated register block.
+# Its accessors are absolute MMIO pointers, so the function is extracted
+# verbatim and the test redefines them over a local array.
+raspi3_uart_rx_extract.h: ../../hal/raspi3.c
+	sed -n '/^int uart_rx(/,/^}/p' $< > $@
+	test -s $@
+
+unit-raspi3-uart-rx: unit-raspi3-uart-rx.c raspi3_uart_rx_extract.h
+	gcc -o $@ unit-raspi3-uart-rx.c $(CFLAGS) $(LDFLAGS)
+# unit-mpfs-wdt drives the real mpfs_wdt_pet_all() from hal/mpfs250.c against
+# an emulated MSS watchdog register file.  A refresh written while the counter
+# is above MVRP is answered with a chip reset, so the test asserts which harts
+# were written rather than a return code.  The register offsets and the status
+# bits are extracted from hal/mpfs250.h so a renumbering cannot pass.
+mpfs250_wdt_extract.h: ../../hal/mpfs250.h ../../hal/mpfs250.c
+	sed -n '/^\/\* MSS Watchdog Timer (per-hart) \*\//,/^#define MSS_WDT_STAT_DEVRST/p' $< \
+		| grep -v '_BASE' > $@
+	grep -h '^#define MPFS_NUM_HARTS' $< >> $@
+	sed -n '/^static const unsigned long mpfs_wdt_bases/,/^};/p' \
+		../../hal/mpfs250.c >> $@
+	sed -n '/^void mpfs_wdt_pet_all(void)$$/,/^}/p' ../../hal/mpfs250.c >> $@
+	test -s $@
+	@for s in MSS_WDT_REFRESH MSS_WDT_STATUS MSS_WDT_STAT_FORBIDDEN \
+		MPFS_NUM_HARTS mpfs_wdt_bases mpfs_wdt_pet_all; do grep -q "$$s" $@ || \
+		{ echo "$@: $$s not extracted"; false; }; done
+
+# A refresh outside a gate helper and outside M-mode resets the chip, which no
+# unit test can observe: the source rule is checked alongside the test.
+.PHONY: mpfs-wdt-gate-check
+mpfs-wdt-gate-check:
+	python3 ../ci/check-mpfs-wdt-gate.py ../../hal
+
+unit-mpfs-wdt: unit-mpfs-wdt.c mpfs250_wdt_extract.h | mpfs-wdt-gate-check
+	gcc -o $@ unit-mpfs-wdt.c $(CFLAGS) $(LDFLAGS)
+
+# unit-t10xx-qe-firmware runs the real qe_check_firmware() from
+# hal/nxp_t10xx.c (the per-microcode code_offset was never
+# bounded against the declared image, so a self-consistent blob could
+# make the upload copy arbitrary memory into QE IRAM). The qe_*
+# structures and the check function are extracted verbatim; the check
+# path needs no register access. The four qe_* structs end where the
+# check function's comment begins (a range cannot stop at the 4th
+# '} QE_PACKED;').
+t10xx_qe_firmware_extract.h: ../../hal/nxp_t10xx.c
+	sed -n '/^\/\* Structure packing \*\//,/^\/\* Checks for valid QE firmware \*\//p' $< > $@
+	sed -n '/^static int qe_check_firmware(/,/^}/p' $< >> $@
+
+unit-t10xx-qe-firmware: unit-t10xx-qe-firmware.c t10xx_qe_firmware_extract.h
+	gcc -o $@ unit-t10xx-qe-firmware.c -DWOLFBOOT_NO_PRINTF $(CFLAGS) $(LDFLAGS)
+
+# unit-aurix-erased-fill runs the real PFLASH write, erase and erased check
+# from hal/aurix_tc3xx.c against an emulated tc3_flash_* API that tracks
+# programmed pages. The same source is built for both flag polarities.
+aurix_erased_extract.h: ../../hal/aurix_tc3xx.c
+	sed -n '/^static int RAMFUNCTION programBytesToErasedFlash/,/^}/p' $< > $@
+	sed -n '/^static int RAMFUNCTION _flashWrite(/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write(/,/^}/p' $< >> $@
+	sed -n '/^static int RAMFUNCTION _flashErase(/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_erase(/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_is_erased(/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION ext_flash_is_erased(/,/^}/p' $< >> $@
+
+# unit-elf-store-ecc runs the real ELF scatter store from src/image.c
+# against a write-once flash mock, in both store modes.
+elf_store_extract.h: ../../src/image.c
+	sed -n '/^#define ELF_UNIT /,/^#endif \/\* WOLFBOOT_ELF_FLASH_SCATTER_PRESERVE_SECTORS \*\/$$/p' $< > $@
+
+unit-elf-store-ecc: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c $(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-invert: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_FLAGS_INVERT $(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-unit1: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_FLASH_WRITE_UNIT=1 $(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-preserve: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_ELF_FLASH_SCATTER_PRESERVE_SECTORS \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-preserve-invert: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_ELF_FLASH_SCATTER_PRESERVE_SECTORS \
+		-DWOLFBOOT_FLAGS_INVERT $(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-preserve-unit1: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_ELF_FLASH_SCATTER_PRESERVE_SECTORS \
+		-DWOLFBOOT_FLASH_WRITE_UNIT=1 $(CFLAGS) $(LDFLAGS)
+
+unit-elf-store-ecc-preserve-writeonce: unit-elf-store-ecc.c elf_store_extract.h
+	gcc -o $@ unit-elf-store-ecc.c -DWOLFBOOT_ELF_FLASH_SCATTER_PRESERVE_SECTORS \
+		-DNVM_FLASH_WRITEONCE $(CFLAGS) $(LDFLAGS)
+
+unit-aurix-erased-fill: unit-aurix-erased-fill.c aurix_erased_extract.h
+	gcc -o $@ unit-aurix-erased-fill.c $(CFLAGS) $(LDFLAGS)
+
+unit-aurix-erased-fill-invert: unit-aurix-erased-fill.c aurix_erased_extract.h
+	gcc -o $@ unit-aurix-erased-fill.c -DWOLFBOOT_FLAGS_INVERT $(CFLAGS) $(LDFLAGS)
+
+# unit-t2080-fman-loader runs the real hal_fman_init() from
+# hal/nxp_t2080.c (the loader checked only the QEF magic and
+# then copied attacker-shaped offsets/counts into FMan IRAM). The qe_*
+# structures and the function are extracted verbatim; the test owns the
+# NOR image (FMAN slot at a nonzero bank offset so the remaining-extent
+# check is exercised) and the FMan IRAM registers. The four qe_*
+# structs end where hal_fman_init() begins (a range cannot stop at
+# the 4th '} QE_PACKED;'); sed '$d' trims the function signature.
+t2080_fman_extract.h: ../../hal/nxp_t2080.c
+	sed -n '/^\/\* Reuse QE firmware structures/,/^static int hal_fman_init(/p' $< | sed '$$d' > $@
+	sed -n '/^static int hal_fman_init(void)/,/^}/p' $< >> $@
+
+unit-t2080-fman-loader: unit-t2080-fman-loader.c t2080_fman_extract.h
+	gcc -o $@ unit-t2080-fman-loader.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32g4-write runs the real hal_flash_write() from hal/stm32g4.c
+# (F-11023: the double-word fast path was selected on "len - i > 3" but
+# consumed eight bytes, so an aligned 4-7 byte tail over-read the
+# caller's buffer and over-programmed flash). Same harness as the
+# STM32L5/STM32U5 twins; the g4 helpers are static and un-prefixed.
+stm32g4_write_extract.h: ../../hal/stm32g4.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+# unit-nrf54l-uart-write: the conversion buffer must flush when full so
+# long lines are not truncated (F-12884); uart_write_raw is mocked.
+nrf54l_uart_write_extract.h: ../../hal/nrf54l.c
+	sed -n '/^void uart_write_device/,/^}/p' $< > $@
+
+unit-nrf54l-uart-write: unit-nrf54l-uart-write.c nrf54l_uart_write_extract.h
+	gcc -o $@ unit-nrf54l-uart-write.c $(CFLAGS) $(LDFLAGS)
+
+unit-nrf54l-flash: unit-nrf54l-flash.c ../../hal/nrf54l.c ../../hal/nrf54l.h
+	gcc -o $@ unit-nrf54l-flash.c -Wno-int-to-pointer-cast $(CFLAGS) $(LDFLAGS)
+
+unit-nrf54lm20-flash: unit-nrf54l-flash.c ../../hal/nrf54l.c ../../hal/nrf54l.h
+	gcc -o $@ unit-nrf54l-flash.c -Wno-int-to-pointer-cast -DNRF54LM20 \
+		$(CFLAGS) $(LDFLAGS)
+
+# unit-x86-uart: uart_init() must derive the stop-bit field from the
+# requested stop count (F-12885); port I/O is mocked.
+unit-x86-uart: unit-x86-uart.c ../../hal/x86_uart.c
+	gcc -o $@ unit-x86-uart.c ../../hal/x86_uart.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32h7-flash-write: the bank-boundary dispatcher splits cross-bank
+# requests (F-12871); hal_flash_write_part is mocked.
+stm32h7_flash_write_extract.h: ../../hal/stm32h7.c
+	sed -n '/^int RAMFUNCTION hal_flash_write(/,/^}/p' $< > $@
+
+unit-stm32h7-flash-write: unit-stm32h7-flash-write.c stm32h7_flash_write_extract.h
+	gcc -o $@ unit-stm32h7-flash-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32u3-flash-write: post-program status must be checked and
+# misaligned addresses rejected (F-12106); flash registers are stubbed.
+stm32u3_flash_write_extract.h: ../../hal/stm32u3.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32u3-flash-write: unit-stm32u3-flash-write.c stm32u3_flash_write_extract.h
+	gcc -o $@ unit-stm32u3-flash-write.c $(CFLAGS) $(LDFLAGS)
+
+unit-stm32g4-write: unit-stm32g4-write.c stm32g4_write_extract.h
+	gcc -o $@ unit-stm32g4-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32g0-write: the G0 copy of the F-11023 double-word fast path;
+# same harness as unit-stm32g4-write.
+stm32g0_write_extract.h: ../../hal/stm32g0.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32g0-write: unit-stm32g0-write.c stm32g0_write_extract.h
+	gcc -o $@ unit-stm32g0-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32l4-write runs the real hal_flash_write() from hal/stm32l4.c
+# (F-12062: the double-word fast path was selected on "len - i > 3" but
+# consumed eight bytes, so an aligned 4-7 byte tail over-read the
+# caller's buffer and over-programmed flash). Same harness as the
+# STM32G4 twin (F-11023); the l4 helpers are static and un-prefixed.
+stm32l4_write_extract.h: ../../hal/stm32l4.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32l4-write: unit-stm32l4-write.c stm32l4_write_extract.h
+	gcc -o $@ unit-stm32l4-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32wb-write runs the real hal_flash_write() from hal/stm32wb.c
+# (F-12063: the double-word fast path was selected on "len - i > 3" but
+# consumed eight bytes, so an aligned 4-7 byte tail over-read the
+# caller's buffer and over-programmed flash). Same harness as the
+# STM32G4/STM32L4 twins; the wb helpers are static and un-prefixed.
+stm32wb_write_extract.h: ../../hal/stm32wb.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32wb-write: unit-stm32wb-write.c stm32wb_write_extract.h
+	gcc -o $@ unit-stm32wb-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32c0-write runs the real hal_flash_write() from hal/stm32c0.c
+# (the double-word fast path added the flash base to an already
+# absolute address, targeting an address space past the flash, and the
+# read-modify-write path located its unit from the request base instead
+# of from the destination). Same harness as the STM32L4/STM32WB twins;
+# the c0 helpers are static and un-prefixed.
+stm32c0_write_extract.h: ../../hal/stm32c0.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32c0-write: unit-stm32c0-write.c stm32c0_write_extract.h
+	gcc -o $@ unit-stm32c0-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32h7s-write runs the real hal_flash_write() from
+# hal/stm32h7s.c. The STM32H7RS programs out of a 128-bit (16-byte)
+# write buffer, so the aligned fast path must require a full quad-word
+# of source before it is taken, and a short tail must read the rest of
+# the quad-word back from flash rather than padding it. Same harness as
+# the STM32C0/G4/L4/WB twins.
+stm32h7s_write_extract.h: ../../hal/stm32h7s.c
+	sed -n '/^static RAMFUNCTION void flash_wait_complete/,/^}/p' $< > $@
+	sed -n '/^static void RAMFUNCTION flash_clear_errors/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32h7s-write: unit-stm32h7s-write.c stm32h7s_write_extract.h
+	gcc -o $@ unit-stm32h7s-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-t10xx-flash-status runs the real hal_flash_write()/hal_flash_erase()
+# and hal_flash_status_wait() from hal/nxp_t10xx.c against a mock QPI
+# status model (F-11033: a timed-out program/erase used to report
+# success because the wait result was discarded).
+t10xx_flash_status_extract.h: ../../hal/nxp_t10xx.c
+	sed -n '/^static void hal_flash_unlock_sector/,/^}/p' $< > $@
+	sed -n '/^static int hal_flash_status_wait/,/^}/p' $< >> $@
+	sed -n '/^int hal_flash_write/,/^}/p' $< >> $@
+	sed -n '/^int hal_flash_erase/,/^}/p' $< >> $@
+
+unit-t10xx-flash-status: unit-t10xx-flash-status.c t10xx_flash_status_extract.h
+	gcc -o $@ unit-t10xx-flash-status.c $(CFLAGS) $(LDFLAGS)
+
+# unit-p1021-erase-advance runs the real ext_flash_erase() from
+# hal/nxp_p1021.c against mocked ELBC access (F-11034: the loop never
+# advanced the address, re-erasing the first block of the range).
+p1021_erase_extract.h: ../../hal/nxp_p1021.c
+	sed -n '/#define ELBC_BASE /p' $< > $@
+	sed -n '/#define ELBC_MDR /p' $< >> $@
+	sed -n '/#define ELBC_FIR /p' $< >> $@
+	sed -n '/#define ELBC_FCR /p' $< >> $@
+	sed -n '/#define ELBC_FBCR /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP(/p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_PA /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CM0 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CM2 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CW1 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_RS /p' $< >> $@
+	sed -n '/#define ELBC_FCR_CMD(/p' $< >> $@
+	sed -n '/#define NAND_CMD_STATUS /p' $< >> $@
+	sed -n '/#define NAND_CMD_BLOCK_ERASE1 /p' $< >> $@
+	sed -n '/#define NAND_CMD_BLOCK_ERASE2 /p' $< >> $@
+	sed -n '/#define FLASH_PAGE_SIZE /p' $< >> $@
+	sed -n '/#define NAND_STATUS_WP_N /p' $< >> $@
+	sed -n '/#define NAND_STATUS_FAIL /p' $< >> $@
+
+p1021_erase_fn_extract.h: ../../hal/nxp_p1021.c
+	sed -n '/^int ext_flash_erase/,/^}/p' $< > $@
+
+unit-p1021-erase-advance: unit-p1021-erase-advance.c p1021_erase_extract.h \
+	p1021_erase_fn_extract.h
+	gcc -o $@ unit-p1021-erase-advance.c $(CFLAGS) $(LDFLAGS)
+
+# unit-p1021-read-badblock runs the real ext_flash_read() from
+# hal/nxp_p1021.c against a simulated NAND (F-12064: the bad-block
+# marker counter was kept for the whole request, so only the first
+# two pages read were checked, and a skip rewound the position but
+# not the output pointer).
+p1021_read_extract.h: ../../hal/nxp_p1021.c
+	sed -n '/#define ELBC_BASE /p' $< > $@
+	sed -n '/#define ELBC_MDR /p' $< >> $@
+	sed -n '/#define ELBC_FIR /p' $< >> $@
+	sed -n '/#define ELBC_FCR /p' $< >> $@
+	sed -n '/#define ELBC_FBCR /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP(/p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_PA /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CA /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CM0 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CM1 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_CW0 /p' $< >> $@
+	sed -n '/#define ELBC_FIR_OP_RBW /p' $< >> $@
+	sed -n '/#define ELBC_FCR_CMD(/p' $< >> $@
+	sed -n '/#define NAND_CMD_READA /p' $< >> $@
+	sed -n '/#define NAND_CMD_READSTART /p' $< >> $@
+	sed -n '/#define FLASH_PAGE_SIZE /p' $< >> $@
+
+p1021_read_fn_extract.h: ../../hal/nxp_p1021.c
+	sed -n '/^int ext_flash_read(uintptr_t address, uint8_t \*data, int len)$$/,/^}/p' $< > $@
+
+unit-p1021-read-badblock: unit-p1021-read-badblock.c p1021_read_extract.h \
+	p1021_read_fn_extract.h
+	gcc -o $@ unit-p1021-read-badblock.c $(CFLAGS) $(LDFLAGS)
+
+# unit-kontron-tgl-spi runs the real tgl_lock_bios_region() from
+# hal/x86_fsp_tgl.c against mocked PCI config space and an
+# MMIO array at the SPI BAR address (F-12104: the lock was never
+# applied - no hal_flash_protect() override - and targeted the
+# wrong register space).
+kontron_spi_extract.h: ../../hal/x86_fsp_tgl.c
+	sed -n '/^#define SPI_PCI_DEV/,/^#define SPI_FLOCKDN/p' $< > $@
+
+kontron_spi_fn_extract.h: ../../hal/x86_fsp_tgl.c
+	sed -n '/^int tgl_lock_bios_region/,/^}/p' $< > $@
+	sed -n '/^int hal_flash_protect/,/^}/p' $< >> $@
+
+unit-kontron-tgl-spi: unit-kontron-tgl-spi.c kontron_spi_extract.h \
+	kontron_spi_fn_extract.h
+	gcc -o $@ unit-kontron-tgl-spi.c $(CFLAGS) $(LDFLAGS)
+
+# unit-tgl-spi-hwseq runs the real SPI hardware-sequencing erase/write from
+# hal/x86_fsp_tgl.c (FSP memory training data cache) against a model of the
+# SPI controller registers and a RAM-backed flash window.
+tgl_spi_hwseq_extract.h: ../../hal/x86_fsp_tgl.c
+	sed -n '/^#ifdef WOLFBOOT_FSP_NVS_CACHE/,/^#endif \/\* WOLFBOOT_FSP_NVS_CACHE \*\//p' $< > $@
+
+unit-tgl-spi-hwseq:CFLAGS+=-DWOLFBOOT_FSP_NVS_CACHE
+unit-tgl-spi-hwseq: unit-tgl-spi-hwseq.c kontron_spi_extract.h \
+	tgl_spi_hwseq_extract.h
+	gcc -o $@ unit-tgl-spi-hwseq.c $(CFLAGS) $(LDFLAGS)
+
+# unit-x86-apic-ids runs the real x86_apic_ids_from_topology() from
+# src/x86/common.c (the CPU list behind the MADT and the MP table).
+x86_apic_ids_extract.h: ../../src/x86/common.c
+	sed -n '/^int x86_apic_ids_from_topology/,/^}/p' $< > $@
+
+unit-x86-apic-ids: unit-x86-apic-ids.c x86_apic_ids_extract.h
+	gcc -o $@ unit-x86-apic-ids.c $(CFLAGS) $(LDFLAGS)
+
+# unit-x86-acpi runs the x86 FSP ACPI table builders (src/x86/acpi.c)
+# against mocked PCI, MMIO and CPU topology reads.
+unit-x86-acpi: unit-x86-acpi.c ../../src/x86/acpi.c ../../include/x86/acpi_dsdt.h
+	gcc -o $@ unit-x86-acpi.c $(CFLAGS) $(LDFLAGS)
+
+# unit-boot-x86-fsp-payload runs the ELF segment check and the per-image
+# Multiboot2 ELF or Linux choice (src/boot_x86_fsp_payload.c).
+unit-boot-x86-fsp-payload: ../../include/target.h unit-boot-x86-fsp-payload.c \
+		../../src/boot_x86_fsp_payload.c
+	gcc -o $@ unit-boot-x86-fsp-payload.c $(CFLAGS) \
+		-DWOLFBOOT_LOAD_BASE=0x58000200 -DWOLFBOOT_FSP -DTARGET_nai_68int6 \
+		-DWOLFBOOT_64BIT \
+		-DX86_UART_BASE=0xFE036000 -DWOLFBOOT_LINUX_PAYLOAD -DWOLFBOOT_ELF \
+		-DWOLFBOOT_MULTIBOOT2 $(LDFLAGS)
+
+# unit-boot-x86-fsp-measure runs the stage 1 PCR 0 measurement of stage 2
+# (wolfBoot_image_measure() in src/boot_x86_fsp.c) with real SHA-256.
+unit-boot-x86-fsp-measure: ../../include/target.h unit-boot-x86-fsp-measure.c \
+		../../src/boot_x86_fsp.c
+	gcc -o $@ unit-boot-x86-fsp-measure.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) \
+		-I$(WOLFBOOT_LIB_WOLFTPM) -DWOLFTPM_USER_SETTINGS \
+		-DWOLFBOOT_LOAD_BASE=0x100000 -DWOLFBOOT_FSP -DUCODE0_ADDRESS=0 \
+		-D__WOLFBOOT -DWOLFBOOT_TPM -DWOLFBOOT_MEASURED_BOOT \
+		-DWOLFBOOT_MEASURED_PCR_A=0 \
+		-DWOLFBOOT_HASH_SHA384 -DWOLFBOOT_SIGN_ECC384 \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# unit-fsp-nvs runs the FSP-M memory training data cache record check and
+# the stage 1 hand-off (src/x86/fsp_nvs.c) against a RAM-backed area.
+unit-fsp-nvs:CFLAGS+=-DWOLFBOOT_FSP -DWOLFBOOT_FSP_NVS_CACHE \
+	-DWOLFBOOT_FSP_NVS_TPM -DBUILD_LOADER_STAGE1 -DPRINTF_ENABLED
+unit-fsp-nvs: unit-fsp-nvs.c ../../src/x86/fsp_nvs.c
+	gcc -o $@ unit-fsp-nvs.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections $(LDFLAGS) -Wl,--gc-sections
+
+# unit-fsp-nvs-save runs the stage 2 save path against a synthetic HOB list
+# and a RAM-backed flash area; built non-PIE so the HOB list sits below 4 GB
+# (stage2_parameter.hobList is 32-bit).
+unit-fsp-nvs-save:CFLAGS+=-DWOLFBOOT_FSP -DWOLFBOOT_FSP_NVS_CACHE \
+	-DWOLFBOOT_FSP_NVS_TPM -DWOLFBOOT_TPM -DWOLFTPM_USER_SETTINGS \
+	-I$(WOLFBOOT_LIB_WOLFTPM) -D__WOLFBOOT -DWOLFBOOT_HASH_SHA384 \
+	-DWOLFBOOT_SIGN_ECC384 -DPRINTF_ENABLED -fno-pie
+unit-fsp-nvs-save: unit-fsp-nvs-save.c ../../src/x86/fsp_nvs.c ../../src/x86/hob.c
+	gcc -o $@ unit-fsp-nvs-save.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c $(CFLAGS) \
+		-ffunction-sections -fdata-sections -no-pie $(LDFLAGS) \
+		-Wl,--gc-sections
+
+# unit-nrf5340-flash-protect runs the real hal_flash_protect() from
+# hal/nrf5340.c against a mock SPU region-permission array (F-13623: the
+# region count truncated, so a sub-block or partial-tail len left flash
+# writable while the function reported success).
+nrf5340_protect_fn_extract.h: ../../hal/nrf5340.c
+	sed -n '/^int RAMFUNCTION hal_flash_protect/,/^}/p' $< > $@
+
+unit-nrf5340-flash-protect: unit-nrf5340-flash-protect.c \
+	nrf5340_protect_fn_extract.h
+	gcc -o $@ unit-nrf5340-flash-protect.c $(CFLAGS) $(LDFLAGS)
+
+# unit-keygen-keystore compiles the REAL accessors emitted by keygen's
+# Keystore_API template (F-13624: the generated keystore's accessors lacked
+# the id < 0 guard the OTP backend has). The generator extracts the template
+# from keygen.c and emits a self-contained keystore.c with a one-key PubKeys
+# array; the test compiles it and asserts the out-of-range contract.
+keystore_api_extract.h: ../../tools/keytools/keygen.c
+	sed -n '/^const char Keystore_API\[\]/,/[;]$$/p' $< > $@
+
+keystore_gen: keystore_gen.c keystore_api_extract.h
+	gcc -o $@ keystore_gen.c $(CFLAGS)
+
+keystore_emitted.c: keystore_gen
+	./keystore_gen > $@
+
+unit-keygen-keystore: unit-keygen-keystore.c keystore_emitted.c
+	gcc -o $@ unit-keygen-keystore.c keystore_emitted.c $(CFLAGS) $(LDFLAGS)
+
+# unit-samr21-erase-advance runs the real hal_flash_erase() from
+# hal/samr21.c against a host NVMCTRL register window (F-11036: the
+# length decrement was the body of the NVMREADY wait and the address
+# never advanced, so the loop re-erased the first page forever).
+samr21_erase_extract.h: ../../hal/samr21.c
+	sed -n '/#define FLASH_PAGESIZE /p' $< > $@
+	sed -n '/#define FLASH_ROW_SIZE /p' $< >> $@
+	sed -n '/#define NVMCTRLA_REG /p' $< >> $@
+	sed -n '/#define NVMCTRL_INTFLAG /p' $< >> $@
+	sed -n '/#define NVMCTRL_STATUS /p' $< >> $@
+	sed -n '/#define NVMCTRL_ADDR /p' $< >> $@
+	sed -n '/#define NVMCMD_KEY /p' $< >> $@
+	sed -n '/#define NVMCMD_ERASE /p' $< >> $@
+	sed -n '/#define NVMCMD_WP /p' $< >> $@
+	sed -n '/#define NVMCMD_PBC /p' $< >> $@
+	sed -n '/#define NVMCTRL_INTFLAG_NVMREADY /p' $< >> $@
+	sed -n '/#define NVMSTATUS_ERR /p' $< >> $@
+
+samr21_erase_fn_extract.h: ../../hal/samr21.c
+	sed -n '/^static int RAMFUNCTION nvm_wait/,/^}/p' $< > $@
+	sed -n '/^int RAMFUNCTION hal_flash_erase/,/^}/p' $< >> $@
+
+unit-samr21-erase-advance: unit-samr21-erase-advance.c samr21_erase_extract.h \
+	samr21_erase_fn_extract.h
+	gcc -o $@ unit-samr21-erase-advance.c $(CFLAGS) $(LDFLAGS)
+
+# unit-samr21-flash-protect runs the real hal_flash_protect() from
+# hal/samr21.c against a host NVMCTRL register window. NVMCTRL locks whole
+# regions of a sixteenth of the array each, so the count has to round up and
+# the region size has to come from PARAM: a truncated count leaves the last
+# region writable, and a hardcoded 256KB array size under-locks a 128KB part.
+samr21_protect_extract.h: ../../hal/samr21.c
+	sed -n '/#define NVMCTRLA_REG /p' $< > $@
+	sed -n '/#define NVMCTRL_PARAM /p' $< >> $@
+	sed -n '/#define NVMCTRL_INTFLAG /p' $< >> $@
+	sed -n '/#define NVMCTRL_STATUS /p' $< >> $@
+	sed -n '/#define NVMCTRL_ADDR /p' $< >> $@
+	sed -n '/#define NVMCMD_KEY /p' $< >> $@
+	sed -n '/#define NVMCMD_LR /p' $< >> $@
+	sed -n '/#define NVMCTRL_INTFLAG_NVMREADY /p' $< >> $@
+	sed -n '/#define NVMSTATUS_ERR /p' $< >> $@
+	sed -n '/#define NVMPARAM_NVMP /p' $< >> $@
+	sed -n '/#define NVMPARAM_PSZ_SHIFT /p' $< >> $@
+	sed -n '/#define NVMPARAM_PSZ /p' $< >> $@
+	sed -n '/#define NVM_LOCK_REGIONS /p' $< >> $@
+	sed -n '/#define PAC1_WPCLR /p' $< >> $@
+	sed -n '/#define PAC1_WPSET /p' $< >> $@
+	sed -n '/#define PAC_WP_NVMCTL /p' $< >> $@
+
+samr21_protect_fn_extract.h: ../../hal/samr21.c
+	sed -n '/^static int RAMFUNCTION nvm_wait/,/^}/p' $< > $@
+	sed -n '/^void RAMFUNCTION hal_flash_unlock/,/^}/p' $< >> $@
+	sed -n '/^void RAMFUNCTION hal_flash_lock/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_protect/,/^}/p' $< >> $@
+
+unit-samr21-flash-protect: unit-samr21-flash-protect.c samr21_protect_extract.h \
+	samr21_protect_fn_extract.h
+	gcc -o $@ unit-samr21-flash-protect.c $(CFLAGS) $(LDFLAGS)
+
+# unit-hifive1-flash-write runs the real hal_flash_write() from
+# hal/hifive1.c against a mock fespi model (F-11035: the final partial
+# page of a multi-page write took the full-page branch, over-reading
+# the input and over-programming flash).
+hifive1_flash_write_extract.h: ../../hal/hifive1.c
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< > $@
+
+unit-hifive1-flash-write: unit-hifive1-flash-write.c hifive1_flash_write_extract.h
+	gcc -o $@ unit-hifive1-flash-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-hifive1-hfrosccfg pins the HFROSCCFG field macros extracted from
+# hal/hifive1.c (F-9743: the divider field was masked with the trim
+# mask, so the divider always programmed zero).
+hifive1_hfrosccfg_extract.h: ../../hal/hifive1.c
+	sed -n '/^#define HFROSCCFG_DIV            0x0000001FUL/,/^#define HFROSCCFG_TRIM_SHIFT(t)/p' $< > $@
+
+unit-hifive1-hfrosccfg: unit-hifive1-hfrosccfg.c hifive1_hfrosccfg_extract.h
+	gcc -o $@ unit-hifive1-hfrosccfg.c $(CFLAGS) $(LDFLAGS)
+
+# unit-rp2350-flash-write runs the real hal_flash_write() from
+# hal/rp2350.c against a mock flash_range_program() that enforces the
+# ROM contract (F-12061: unaligned / non page-multiple writes from
+# the partition-state path violate the 256-byte page requirement).
+rp2350_flash_write_extract.h: ../../hal/rp2350.c
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< > $@
+
+unit-rp2350-flash-write: unit-rp2350-flash-write.c rp2350_flash_write_extract.h
+	gcc -o $@ unit-rp2350-flash-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-ecc-raw-der runs the real wolfCrypt raw-to-DER conversion and
+# verification (F-11024: the wolfHSM verify path in src/image.c passed
+# minimal field sizes with field-start pointers to
+# wc_ecc_rs_raw_to_sig, corrupting signatures with leading zeros). It
+# links the same wolfSSL sources the sign tool uses.
+unit-ecc-raw-der: unit-ecc-raw-der.c
+	# WOLFSSL_NO_DER_TO_PEM: the test config's NO_CODING drops base64, which
+	# DER-to-PEM (pulled in by WOLFSSL_KEY_GEN) needs; the test uses no PEM.
+	gcc -o $@ unit-ecc-raw-der.c $(CFLAGS) -DWOLFCRYPT_TEST -DWOLFSSL_NO_DER_TO_PEM \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/aes.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/asn.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/chacha.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/coding.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ecc.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ed25519.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ed448.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/fe_448.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/fe_operations.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ge_448.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/ge_operations.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/hash.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/logging.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/memory.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/random.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/rsa.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha3.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha512.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_c32.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_c64.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sp_int.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/tfm.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/wc_port.c \
+		$(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/wolfmath.c $(LDFLAGS)
+
+# unit-stm32l5-write runs the real hal_flash_write() from hal/stm32l5.c
+# (an 8-byte program unit was read whole even when len left a
+# partial unit, over-reading the caller's buffer and writing the excess
+# bytes to flash). The function and its wait/clear helpers are
+# extracted verbatim; FLASH_SR/CR live on a host register file and the
+# destination flash is a pre-filled host array, so the over-read is
+# observable through a canary after the source buffer.
+stm32l5_write_extract.h: ../../hal/stm32l5.c
+	# hal_flash_wait_complete is mocked in the test (program-window
+	# check), so only the real clear_errors + write are extracted.
+	sed -n '/^void RAMFUNCTION hal_flash_clear_errors/,/^}/p' $< > $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32l5-write: unit-stm32l5-write.c stm32l5_write_extract.h
+	gcc -o $@ unit-stm32l5-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-stm32u5-write is the 16-byte-unit twin of the STM32L5 test:
+# the real hal_flash_write() and clear_errors from hal/stm32u5.c
+# (hal_flash_wait_complete is mocked in the test for the
+# program-window check), FLASH_NS_SR/CR on a host register file,
+# destination flash at a 32-bit host address, canary after the source.
+stm32u5_write_extract.h: ../../hal/stm32u5.c
+	# hal_flash_wait_complete is mocked in the test (program-window
+	# check), so only the real clear_errors + write are extracted.
+	sed -n '/^void RAMFUNCTION hal_flash_clear_errors/,/^}/p' $< > $@
+	sed -n '/^int RAMFUNCTION hal_flash_write/,/^}/p' $< >> $@
+
+unit-stm32u5-write: unit-stm32u5-write.c stm32u5_write_extract.h
+	gcc -o $@ unit-stm32u5-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-nvm-cache-scrub runs the real trailer_write() and
+# partition_magic_write() from src/libwolfboot.c (under
+# NVM_FLASH_WRITEONCE the staged sector can hold the firmware
+# key/nonce, and the buffer was never scrubbed on return). The test
+# owns NVM_CACHE, stages a key-bearing sector image, and stubs the
+# flash layer; after each call the whole buffer must be zeroed.
+nvm_cache_scrub_extract.h: ../../src/libwolfboot.c
+	sed -n '/^static void RAMFUNCTION nvm_cache_scrub(/,/^}/p' $< > $@
+	sed -n '/^static int RAMFUNCTION trailer_write(/,/^}/p' $< >> $@
+	sed -n '/^static int RAMFUNCTION partition_magic_write(/,/^}/p' $< >> $@
+
+unit-nvm-cache-scrub: unit-nvm-cache-scrub.c nvm_cache_scrub_extract.h
+	gcc -o $@ unit-nvm-cache-scrub.c $(CFLAGS) $(LDFLAGS)
+
+# unit-update-trigger-scrub runs the real wolfBoot_update_trigger()
+# from src/libwolfboot.c over the NVM_FLASH_WRITEONCE branch
+# (F-11037: the staged trailer sector, which in EXT_ENCRYPTED builds
+# carries the firmware key/nonce, was never scrubbed from NVM_CACHE).
+# The function is extracted together with nvm_cache_scrub(); the build
+# defines NVM_FLASH_WRITEONCE so the write-once branch compiles.
+update_trigger_scrub_extract.h: ../../src/libwolfboot.c
+	sed -n '/^static void RAMFUNCTION nvm_cache_scrub(/,/^}/p' $< > $@
+	sed -n '/^void RAMFUNCTION wolfBoot_update_trigger(/,/^}/p' $< >> $@
+
+unit-update-trigger-scrub: unit-update-trigger-scrub.c update_trigger_scrub_extract.h
+	gcc -o $@ unit-update-trigger-scrub.c -DNVM_FLASH_WRITEONCE $(CFLAGS) $(LDFLAGS)
+
+# unit-sdhci-uhs-recover drives disk_read()'s UHS recovery path from the
+# real src/sdhci.c (any read error permanently switched the host
+# to 1.8V signaling with no rollback). sdhci_host.c (generated below) is
+# identical to the real file except the three `asm volatile` statements
+# are blanked (they cannot assemble on x86) and the real sdhci_read() is
+# renamed to sdhci_read_hw() so the test can provide a scripted one. The
+# platform-provided sdhci_reg_read()/sdhci_reg_write() are backed by a
+# host register array; hal_get_timer_us() and wolfBoot_printf() are
+# stubbed in the test.
+
+sdhci_host.c: ../../src/sdhci.c
+	sed -E -e 's/^[[:space:]]*asm volatile\("[^"]*"[^;]*\);[[:space:]]*//' \
+	    -e 's/^int sdhci_read\(/int sdhci_read_hw(/' \
+	    -e 's/^void __attribute__\(\(weak\)\) sdhci_platform_wdt_pet\(void\)$$/void sdhci_platform_wdt_pet_unused(void)/' $< > $@
+
+unit-sdhci-uhs-recover: unit-sdhci-uhs-recover.c sdhci_host.c
+	gcc -o $@ unit-sdhci-uhs-recover.c -DDISK_SDCARD $(CFLAGS) $(LDFLAGS)
+
+unit-sdhci-cmd-inhibit: unit-sdhci-cmd-inhibit.c sdhci_host.c
+	gcc -o $@ unit-sdhci-cmd-inhibit.c -DDISK_SDCARD $(CFLAGS) $(LDFLAGS)
+
+# Twin of the above with the opt-in init-time UHS recovery compiled in.
+unit-sdhci-cmd-inhibit-uhs: unit-sdhci-cmd-inhibit.c sdhci_host.c
+	gcc -o $@ unit-sdhci-cmd-inhibit.c -DDISK_SDCARD \
+	    -DSDHCI_UHS_RECOVER_ON_INIT $(CFLAGS) $(LDFLAGS)
+
+# unit-sdhci-wait-busy drives sdhci_wait_busy()'s DATA0/CMD13 loops
+# from the real src/sdhci.c (neither loop had a timeout, so a
+# stuck/removed card spun forever). The controller is scripted through
+# the host register file. SDHCI_WAIT_BUSY_TIMEOUT_MS is deliberately
+# NOT overridden: the test's timer stub steps 1ms per read so the
+# shipped default is the value under test.
+unit-sdhci-wait-busy: unit-sdhci-wait-busy.c sdhci_host.c
+	gcc -o $@ unit-sdhci-wait-busy.c -DDISK_SDCARD -DWOLFBOOT_NO_PRINTF $(CFLAGS) $(LDFLAGS)
+
+# unit-sdhci-acmd41-timeout drives sdcard_card_full_init()'s ACMD41 OCR
+# readiness poll from the real src/sdhci.c (F-11032: the do/while had no
+# bound, so a card answering ACMD41 without ever setting OCR ready held
+# the boot forever). Same sdhci_host.c generation as the wait-busy test;
+# the card model sets OCR ready after N scripted ACMD41 polls, the timer
+# stub steps 10 ms per read, and a command-write cap turns the pre-fix
+# infinite loop into an abort.
+unit-sdhci-acmd41-timeout: unit-sdhci-acmd41-timeout.c sdhci_host.c
+	gcc -o $@ unit-sdhci-acmd41-timeout.c -DDISK_SDCARD -DWOLFBOOT_NO_PRINTF $(CFLAGS) $(LDFLAGS)
+
+# unit-ti-hercules-write runs the real hal_flash_write() staging logic
+# from hal/ti_hercules.c (a short write crossing a block
+# boundary overran the staging buffer and lost the next block's bytes).
+# ti_hercules.c needs the TI FAPI vendor headers (board build tree) and
+# cannot be compiled on the host, but the bug is entirely in this
+# function, so the Makefile extracts hal_flash_unlock_helper(), the
+# WRITE_BLOCK_SIZE define, and hal_flash_write() verbatim into
+# ti_hercules_write_extract.h; the FAPI calls are emulated in the test,
+# with Fapi_issueProgrammingCommand() performing the program into a host
+# flash array.
+
+ti_hercules_write_extract.h: ../../hal/ti_hercules.c
+	sed -n '/^static inline int RAMFUNCTION hal_flash_unlock_helper/,/^}/p' $< > $@
+	grep '^#define WRITE_BLOCK_SIZE' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_write(/,/^}/p' $< >> $@
+
+unit-ti-hercules-write: unit-ti-hercules-write.c ti_hercules_write_extract.h
+	gcc -o $@ unit-ti-hercules-write.c $(CFLAGS) $(LDFLAGS)
+
+# unit-ti-hercules-erase runs the real hal_flash_erase() bank handling
+# from hal/ti_hercules.c (a range crossing the end of the starting
+# flash bank was partially erased and reported as success).
+# Same extraction trick as the write test; the FAPI calls are
+# emulated with a two-bank geometry.
+
+ti_hercules_erase_extract.h: ../../hal/ti_hercules.c
+	sed -n '/^static inline Fapi_FlashBankType RAMFUNCTION f021_lookup_bank/,/^}/p' $< > $@
+	sed -n '/^static inline int RAMFUNCTION hal_flash_unlock_helper/,/^}/p' $< >> $@
+	sed -n '/^int RAMFUNCTION hal_flash_erase(/,/^}/p' $< >> $@
+
+unit-ti-hercules-erase: unit-ti-hercules-erase.c ti_hercules_erase_extract.h
+	gcc -o $@ unit-ti-hercules-erase.c $(CFLAGS) $(LDFLAGS)
+
+# unit-p1021-qe-firmware drives the real qe_upload_firmware() from
+# hal/nxp_p1021.c (microcode offsets/counts were
+# never bounded to the 64 KiB buffer read from the update partition).
+# Reuses the nxp_p1021_host.c generated for the FCM tests, with the
+# PowerPC accessors shadowed the same way.
+
+unit-p1021-qe-firmware: unit-p1021-qe-firmware.c nxp_p1021_host.c
+	gcc -o $@ unit-p1021-qe-firmware.c -DTARGET_nxp_p1021 -I../../hal $(CFLAGS) $(LDFLAGS)
+
+# unit-t10xx-dts-memac drives the real hal_dts_fixup() FDT memac loop
+# (unvalidated cell-index into phydevs[5]) with hand-built
+# DTBs. Extracts the function plus its liodn/qman static tables from
+# hal/nxp_t10xx.c.
+nxp_t10xx_fixup_extract.h: ../../hal/nxp_t10xx.c
+	sed -n '/^struct liodn_id_table {/,/^};/p' $< > $@
+	sed -n '/#define SET_LIODN(/,/reg_offset = (void\*)reg/p' $< >> $@
+	sed -n '/^static const struct liodn_id_table liodn_tbl\[\] = {/,/^};/p' $< >> $@
+	sed -n '/^struct qportal_info {/,/^};/p' $< >> $@
+	sed -n '/#define SET_QP_INFO(/,/sdest = dest/p' $< >> $@
+	sed -n '/^static const struct qportal_info qp_info\[QMAN_NUM_PORTALS\] = {/,/^};/p' $< >> $@
+	grep -E '^#define FM1_(DTSEC[0-9]|10GEC1) ' $< >> $@
+	sed -n '/^int hal_dts_fixup(/,/^}/p' $< >> $@
+
+unit-t10xx-dts-memac: unit-t10xx-dts-memac.c nxp_t10xx_fixup_extract.h ../../src/fdt.c
+	gcc -o $@ unit-t10xx-dts-memac.c $(CFLAGS) $(LDFLAGS)
+
+# unit-efi-x86-open-image includes hal/x86_64_efi.c directly, with in-test
+# host mocks standing in for the gnu-efi runtime (BS, LibFileInfo, the
+# x86-64 efi_callN() trampolines). This is the only host build coverage
+# hal/x86_64_efi.c has.
+#
+# -fshort-wchar matches the real x86_64_efi build (arch.mk), where the
+# 16-bit wchar_t is what makes efi_main's L"..." literals valid CHAR16
+# strings under gnu-efi 4.x (CHAR16 = uint16_t).
+unit-efi-x86-open-image: unit-efi-x86-open-image.c ../../hal/x86_64_efi.c
+	gcc -o $@ unit-efi-x86-open-image.c -I/usr/include/efi -I/usr/include/efi/x86_64 -DTARGET_X86_64_EFI -fshort-wchar $(CFLAGS) $(LDFLAGS)
+
+# NXP HAL tests include hal/<chip>.c directly. SDK headers go in as -isystem
+# so their own 64-bit-host warnings stay out of the test build.
+MCUXSDK_TEST_INC=-Icmsis_stub -isystem $(MCUXSDK)/drivers/common
+MCXA_TEST_INC=-DCPU_MCXA153VLH $(MCUXSDK_TEST_INC) -isystem $(MCXA_SDK) \
+	-isystem $(MCXA_SDK)/../periph -isystem $(MCXA_SDK)/drivers \
+	-isystem $(MCXA_SDK)/drivers/romapi -isystem $(MCUXSDK)/drivers/mcx_spc
+RW612_TEST_INC=-DCPU_RW612ETA2I $(MCUXSDK_TEST_INC) -isystem $(RW612_SDK) \
+	-isystem $(RW612_SDK)/../periph -isystem $(RW612_SDK)/drivers \
+	-isystem $(RW612_SDK)/drivers/romapi/flexspi -isystem $(MCUXSDK)/drivers/trng
+
+unit-flash-write-mcxa: unit-flash-write-mcxa.c ../../hal/mcxa.c
+	gcc -o $@ unit-flash-write-mcxa.c $(MCXA_TEST_INC) $(CFLAGS) $(LDFLAGS)
+
+unit-rw612-flash: unit-rw612-flash.c ../../hal/rw612.c
+	gcc -o $@ unit-rw612-flash.c $(RW612_TEST_INC) $(CFLAGS) $(LDFLAGS)
+
+unit-rw612-tz: unit-rw612-tz.c ../../hal/rw612.c
+	gcc -o $@ unit-rw612-tz.c $(RW612_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-rw612-uart: unit-rw612-uart.c ../../hal/rw612.c
+	gcc -o $@ unit-rw612-uart.c -DDEBUG_UART $(RW612_TEST_INC) \
+		-isystem $(MCUXSDK)/drivers/flexcomm \
+		-isystem $(MCUXSDK)/drivers/flexcomm/usart $(CFLAGS) $(LDFLAGS)
+
+PSOC6_PDL=$(PSOC6_LIBS)/mtb-pdl-cat1
+PSOC6_TEST_INC=-U__ARM_ARCH -D__ARM_ARCH=6 -D__ARM_ARCH_6M__=1 \
+	-DCY8C624ABZI_S2D44 -DPSOC6_BOARD_CY8CEVAL_062S2 \
+	-DCY_CUSTOM_ASSERT_HANDLER -Icmsis_stub -I../.. \
+	-isystem $(PSOC6_PDL)/drivers/include \
+	-isystem $(PSOC6_PDL)/devices/COMPONENT_CAT1A/include \
+	-isystem $(PSOC6_PDL)/devices/COMPONENT_CAT1A/include/ip \
+	-isystem $(PSOC6_LIBS)/mtb-template-cat1/files/templates/cat1a/COMPONENT_MTB \
+	-isystem $(PSOC6_LIBS)/core-lib/include
+PSOC6_TEST_DEPS=../../hal/psoc6.c ../../hal/psoc6.h cmsis_stub/core_cm0plus.h
+
+unit-psoc6-flash: unit-psoc6-flash.c $(PSOC6_TEST_DEPS)
+	gcc -o $@ unit-psoc6-flash.c -DDEBUG_UART -DRAM_CODE $(PSOC6_TEST_INC) \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-psoc6-qspi: unit-psoc6-qspi.c $(PSOC6_TEST_DEPS)
+	gcc -o $@ unit-psoc6-qspi.c -DEXT_FLASH=1 -DPART_UPDATE_EXT=1 \
+		$(PSOC6_TEST_INC) $(CFLAGS) $(LDFLAGS)
+
+unit-psoc6-boot: unit-psoc6-boot.c $(PSOC6_TEST_DEPS)
+	gcc -o $@ unit-psoc6-boot.c -D__WOLFBOOT -DDEBUG_UART \
+		-DWOLFBOOT_HASH_SHA256 -DWOLFBOOT_SIGN_ECC256 -DDUALBANK_SWAP=1 \
+		-DBOOT_BENCHMARK \
+		-DWOLFBOOT_BOOT_REMOTE_CORE -DWOLFBOOT_ORIGIN=0x10000000 \
+		-DBOOTLOADER_PARTITION_SIZE=0x20000 -DARCH_FLASH_OFFSET=0x10000000 \
+		$(PSOC6_TEST_INC) $(CFLAGS) $(LDFLAGS)
+
+MCXW_SSS=$(MCUXSDK)/middleware/secure-subsystem
+MCXW_TEST_INC=-DCPU_MCXW716CMFTA $(MCUXSDK_TEST_INC) -isystem $(MCXW_SDK) \
+	-isystem $(MCXW_SDK)/../periph2 -isystem $(MCXW_SDK)/drivers \
+	-isystem $(MCUXSDK)/drivers/port -isystem $(MCUXSDK)/drivers/lpuart \
+	-isystem $(MCUXSDK)/drivers/tstmr -isystem $(MCUXSDK)/drivers/elemu \
+	-isystem $(MCXW_SSS)/inc -isystem $(MCXW_SSS)/inc/elemu \
+	-isystem $(MCXW_SSS)/src/sscp \
+	-DSSCP_CONFIG_FILE='"fsl_sscp_config_elemu.h"' \
+	-DSSS_CONFIG_FILE='"fsl_sss_config_elemu.h"'
+
+unit-mcxw-flash: unit-mcxw-flash.c ../../hal/mcxw.c ../../hal/mcxw.h
+	gcc -o $@ unit-mcxw-flash.c $(MCXW_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-mcxw-tz: unit-mcxw-tz.c unit-mmio.h ../../hal/mcxw.c ../../hal/mcxw.h
+	gcc -o $@ unit-mcxw-tz.c $(MCXW_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+LPC55S69_TEST_INC=-DCPU_LPC55S69JBD100_cm33_core0 $(MCUXSDK_TEST_INC) \
+	-isystem $(LPC55S69_SDK) -isystem $(LPC55S69_SDK)/../periph \
+	-isystem $(LPC55S69_SDK)/drivers -isystem $(MCUXSDK)/drivers/iap1 \
+	-isystem $(MCUXSDK)/drivers/rng_1 -isystem $(MCUXSDK)/drivers/lpc_iocon \
+	-isystem $(MCUXSDK)/drivers/lpc_gpio -isystem $(MCUXSDK)/drivers/puf \
+	-isystem $(MCUXSDK)/drivers/flexcomm \
+	-isystem $(MCUXSDK)/drivers/flexcomm/usart \
+	-isystem $(MCUXSDK)/examples/_boards/lpcxpresso55s69/project_template
+
+unit-lpc55s69-flash: unit-lpc55s69-flash.c ../../hal/lpc55s69.c ../../hal/lpc55s69.h
+	gcc -o $@ unit-lpc55s69-flash.c $(LPC55S69_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-lpc55s69-tz: unit-lpc55s69-tz.c ../../hal/lpc55s69.c ../../hal/lpc55s69.h
+	gcc -o $@ unit-lpc55s69-tz.c $(LPC55S69_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-lpc55s69-uart: unit-lpc55s69-uart.c ../../hal/lpc55s69.c ../../hal/lpc55s69.h
+	gcc -o $@ unit-lpc55s69-uart.c -DDEBUG_UART $(LPC55S69_TEST_INC) -I../.. \
+		$(CFLAGS) $(LDFLAGS)
+
+unit-lpc55s69-puf: unit-lpc55s69-puf.c ../../hal/lpc55s69.c ../../hal/lpc55s69.h
+	gcc -o $@ unit-lpc55s69-puf.c $(LPC55S69_TEST_INC) -I../.. $(CFLAGS) $(LDFLAGS)
+
+unit-flash-write-nrf52: unit-flash-write-nrf52.c ../../hal/nrf52.c
+	gcc -o $@ unit-flash-write-nrf52.c -DTARGET_nrf52 -I../../hal $(CFLAGS) $(LDFLAGS)
+
+unit-nrf5340-uart-crlf: unit-nrf5340-uart-crlf.c ../../hal/nrf5340_uart.c
+	gcc -o $@ unit-nrf5340-uart-crlf.c -DDEBUG_UART $(CFLAGS) $(LDFLAGS)
+
+unit-flash-write-samr21: unit-flash-write-samr21.c ../../hal/samr21.c
+	gcc -o $@ unit-flash-write-samr21.c $(CFLAGS) $(LDFLAGS)
+
+unit-flash-write-same51: unit-flash-write-same51.c ../../hal/same51.c
+	gcc -o $@ unit-flash-write-same51.c $(CFLAGS) $(LDFLAGS)
+
+# unit-imx-rt-cache-align only pulls in hal/imx_rt.h, which is dependency-free
+# by design, avoiding the (not vendored) NXP MCUXpresso SDK headers that
+# hal/imx_rt.c itself requires.
+unit-imx-rt-cache-align: unit-imx-rt-cache-align.c ../../hal/imx_rt.h
+	gcc -o $@ unit-imx-rt-cache-align.c $(CFLAGS) $(LDFLAGS)
+
+unit-elf-bss-guard: unit-elf-bss-guard.c
+	gcc -o $@ $< -I../../include -DWOLFBOOT_ELF -DARCH_FLASH_OFFSET=0 \
+		-DWOLFBOOT_NO_PRINTF -g $(LDFLAGS)
+
+unit-elf-entry-inplace: unit-elf-entry-inplace.c
+	gcc -o $@ $< -I../../include -DWOLFBOOT_ELF -DARCH_FLASH_OFFSET=0 \
+		-DWOLFBOOT_NO_PRINTF -g $(LDFLAGS)
+
+# unit-elf-mmu-fail: a failing mmu_cb must abort the whole ELF load
+# (F-11027: the failed mapping used to be skipped with continue, and
+# the entry point was published for a partially loaded image).
+unit-elf-mmu-fail: unit-elf-mmu-fail.c ../../src/elf.c
+	gcc -o $@ unit-elf-mmu-fail.c -I../../include -DWOLFBOOT_ELF \
+		-DARCH_FLASH_OFFSET=0 -DWOLFBOOT_NO_PRINTF -g $(LDFLAGS)
+
+# unit-elf-phentsize: an undersized e_phentsize must be rejected before
+# the program-header loop reads past the validated table (F-13656).
+unit-elf-phentsize: unit-elf-phentsize.c ../../src/elf.c
+	gcc -o $@ unit-elf-phentsize.c -I../../include -DWOLFBOOT_ELF \
+		-DARCH_FLASH_OFFSET=0 -DWOLFBOOT_NO_PRINTF -g $(LDFLAGS)
+
+unit-image-elf-scatter: ../../include/target.h unit-image-elf-scatter.c
+	gcc -o $@ unit-image-elf-scatter.c $(WOLFBOOT_LIB_WOLFSSL)/wolfcrypt/src/sha256.c \
+		$(CFLAGS) $(LDFLAGS)
+
+%.o:%.c
+	gcc -c -o $@ $^ $(CFLAGS)
+
+covclean:
+	rm -f *.gcov *.gcno *.gcda coverage.*
+	rm -f unit-sign-encrypted-output-*
+
+# Sources the extraction rules generate into this directory. Listed here
+# so "clean" removes them and so there is one place that names them.
+GENERATED_SRC:=aurix_erased_extract.h elf_store_extract.h \
+	imx8qm_usdhc_extract.h imx8qm_flexspi_extract.h \
+	imx95_ele_extract.h imx95_disk_extract.h \
+	hifive1_flash_write_extract.h nvm_cache_scrub_extract.h \
+	mpfs250_wdt_extract.h \
+	nxp_ls1028a_host.c nxp_p1021_host.c nxp_t10xx_fixup_extract.h \
+	p1021_erase_extract.h p1021_erase_fn_extract.h \
+	p1021_read_extract.h p1021_read_fn_extract.h \
+	kontron_spi_extract.h kontron_spi_fn_extract.h \
+	nrf5340_protect_fn_extract.h \
+	keystore_api_extract.h keystore_emitted.c keystore_gen \
+	rp2350_flash_write_extract.h \
+	sdhci_host.c \
+	stm32c0_write_extract.h stm32g0_write_extract.h stm32g4_write_extract.h stm32l4_write_extract.h \
+	stm32h7s_write_extract.h \
+	stm32l5_write_extract.h stm32u5_write_extract.h stm32wb_write_extract.h \
+	t10xx_flash_status_extract.h t10xx_qe_firmware_extract.h \
+	t2080_fman_extract.h \
+	ti_hercules_write_extract.h versal_ext_write_extract.h versal_host.c \
+	versal_wdt_extract.h \
+	versal_host.h versal_qspidev_extract.h versal_uart_rx_extract.h \
+	raspi3_uart_rx_extract.h zynq_erase_extract.h \
+	bbram_crc_extract.h efuse_guards_extract.h \
+	puf_extract.h \
+	zynq_write_extract.h \
+	fat32-test.img fat32-test.img.tmp fat32-payload.bin fat32-nested.bin \
+	fat32-short.bin ext4-min.img ext4-stock.img ext4-payload.bin \
+	ext4-nested.bin ext4-fixtures.stamp
+
+# Tests that are only in $(TESTS) when their toolchain/headers are
+# present; clean must remove them regardless, or a host that has since
+# lost gnu-efi/multilib/the MCUXpresso SDK keeps a stale binary forever.
+CONDITIONAL_TESTS:=unit-efi-x86-open-image unit-linux-loader-e820 \
+	unit-linux-loader-syssize unit-flash-write-mcxa unit-rw612-flash \
+	unit-rw612-tz unit-rw612-uart unit-mcxw-flash unit-mcxw-tz \
+	unit-lpc55s69-flash unit-lpc55s69-tz unit-lpc55s69-uart unit-lpc55s69-puf \
+	unit-psoc6-flash unit-psoc6-qspi unit-psoc6-boot
+
+clean: covclean
+	rm -f $(TESTS) $(CONDITIONAL_TESTS) $(GENERATED_SRC) *.o *.gcno *.gcda \
+		coverage.*
+
+# The extraction rules below build one header with several appending
+# commands. Without this, a failure partway through leaves a truncated
+# file with a fresh mtime that the next make treats as up to date.
+.DELETE_ON_ERROR:
+
+.PHONY: FORCE
+
+unit-imx-rt700: unit-imx-rt700.c ../../hal/imx_rt7xx.h
+	gcc -o $@ unit-imx-rt700.c $(CFLAGS)

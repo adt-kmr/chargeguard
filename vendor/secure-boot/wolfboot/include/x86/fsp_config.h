@@ -1,0 +1,78 @@
+#ifndef FSP_CONFIG_H
+#define FSP_CONFIG_H
+
+#include <stdint.h>
+
+#ifndef FSP_HYPERTHREADING
+#define FSP_HYPERTHREADING 0
+#endif
+#if FSP_HYPERTHREADING && !defined(TARGET_nai_68int6)
+/* The Kontron MP table lists four single-thread cores (APIC IDs 0/2/4/6). */
+#error "FSP_HYPERTHREADING=1 needs sibling threads in the MP table"
+#endif
+
+#ifndef FSP_INTEL_SPEED_STEP
+#define FSP_INTEL_SPEED_STEP 0
+#endif
+
+#ifndef FSP_INTEL_SPEED_SHIFT
+#define FSP_INTEL_SPEED_SHIFT 0
+#endif
+
+#define FSP_BOOT_FREQ_MAX_NO_TURBO 0x1
+#ifndef FSP_BOOT_PERFORMANCE_MODE
+#define FSP_BOOT_PERFORMANCE_MODE FSP_BOOT_FREQ_MAX_NO_TURBO
+#endif
+
+#ifndef FSP_C_STATES
+#define FSP_C_STATES 0
+#endif
+
+#ifndef FSP_TXT
+#define FSP_TXT 0
+#endif
+
+#ifndef FSP_IN_BAND_ECC
+#define FSP_IN_BAND_ECC 1
+#endif
+
+/* TM1/TM2 throttling at the thermal-control limit, the FSP default */
+#ifndef FSP_THERMAL_THROTTLING
+#define FSP_THERMAL_THROTTLING 1
+#endif
+
+/* Seconds to wait after the straps, before CPU PCIe link training */
+#ifndef NAI_68INT6_PCIE_LINK_DELAY_S
+#define NAI_68INT6_PCIE_LINK_DELAY_S 0
+#endif
+#if NAI_68INT6_PCIE_LINK_DELAY_S < 0 || NAI_68INT6_PCIE_LINK_DELAY_S > 5
+#error "NAI_68INT6_PCIE_LINK_DELAY_S must be 0 to 5"
+#endif
+
+/* Seconds to wait before polling PCIE_RDY */
+#ifndef NAI_68INT6_BOOT_DELAY_S
+#define NAI_68INT6_BOOT_DELAY_S 0
+#endif
+#if NAI_68INT6_BOOT_DELAY_S < 0 || NAI_68INT6_BOOT_DELAY_S > 255
+#error "NAI_68INT6_BOOT_DELAY_S must be 0 to 255"
+#endif
+
+/* Extra seconds added to the 5 s PCIE_RDY timeout */
+#ifndef NAI_68INT6_FPGA_READY_DELAY_S
+#define NAI_68INT6_FPGA_READY_DELAY_S 0
+#endif
+#if NAI_68INT6_FPGA_READY_DELAY_S != 0 && \
+    NAI_68INT6_FPGA_READY_DELAY_S != 5 && NAI_68INT6_FPGA_READY_DELAY_S != 10
+#error "NAI_68INT6_FPGA_READY_DELAY_S must be 0, 5 or 10"
+#endif
+
+/* FSP-M PlatformDebugConsent: 0 = debug disabled (default), 4 = enabled for
+ * an XDP/MIPI-60 JTAG probe; 1-7 are the FSP's other probe types */
+#ifndef NAI_68INT6_DEBUG_CONSENT
+#define NAI_68INT6_DEBUG_CONSENT 0
+#endif
+#if NAI_68INT6_DEBUG_CONSENT < 0 || NAI_68INT6_DEBUG_CONSENT > 7
+#error "NAI_68INT6_DEBUG_CONSENT must be 0 to 7"
+#endif
+
+#endif

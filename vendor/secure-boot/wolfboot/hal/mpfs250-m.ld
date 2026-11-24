@@ -1,0 +1,187 @@
+/* PolarFire SoC MPFS250 M-Mode Linker Script for wolfBoot
+ *
+ * This linker script is for running wolfBoot in Machine Mode (M-mode)
+ * directly from eNVM, executing from L2 SRAM.
+ *
+ * Boot flow:
+ *   1. CPU starts at eNVM reset vector (0x20220100)
+ *   2. Startup code in eNVM copies main code to L2_SCRATCH
+ *   3. Jumps to L2_SCRATCH for execution
+ *
+ * The first 0x100 bytes of eNVM are reserved for the boot ROM secure boot
+ * meta information added by mpfsBootmodeProgrammer.  A page near the end
+ * holds the signed manifest of this image when the boot mode 2 stub verifies
+ * it (MPFS_ENVM_MANIFEST=1, see hal/mpfs250_ubl.c); it is filled in after
+ * the link and left out of the signed bytes.
+ *
+ * Memory regions:
+ *   FLASH_ENVM  - Embedded NVM (128KB - 0x100 for header - 1KB at the end)
+ *   L2_SCRATCH  - L2 Scratchpad SRAM (256KB) - execution and data
+ */
+
+OUTPUT_ARCH( "riscv" )
+
+ENTRY( _reset )
+
+MEMORY
+{
+    /* The first 0x100 bytes of eNVM are used for boot ROM secure boot meta information
+     * This offset is added by mpfsBootmodeProgrammer (bootmode 1) */
+    FLASH_ENVM (rx)   : ORIGIN = 0x20220100, LENGTH = 128k - 0x100 - 0x400
+    /* Signed manifest of the eNVM image, verified by the boot mode 2 stub.
+     * The last two pages stay free: mpfsBootmodeProgrammer keeps them.
+     * 0x200 is the stub's header size, not this image's: the stub is always
+     * ECC384/SHA384, so the manifest stays that size even when a larger
+     * algorithm signs the image it covers.  Keep in step with
+     * MPFS_ENVM_MANIFEST_SIZE in hal/mpfs250.h. */
+    ENVM_MANIFEST (r) : ORIGIN = 0x2023FC00, LENGTH = 0x200
+
+    /* L2 scratchpad.  MPFS250 hardwires ways 8-11, so 4 x 128 KB is the
+     * ceiling the startup pin loop can make resident; ASSERT below enforces it. */
+    L2_SCRATCH (rwx)  : ORIGIN = @WOLFBOOT_ORIGIN@, LENGTH = @WOLFBOOT_L2SCRATCH_SIZE@
+}
+
+/* Boot-hart stack.  ECC384+SHA384 needs a few KB; ML-DSA-87 adds its working
+ * set plus the two IMAGE_HEADER_SIZE buffers update_disk.c puts on the stack. */
+PROVIDE(STACK_SIZE = @STACK_SIZE@);
+
+/* 4 scratchpad ways x 128 KB (WAY_BYTE_LENGTH).  Going past this hands out
+ * addresses the startup pin loop never made resident. */
+ASSERT(LENGTH(L2_SCRATCH) <= 4 * 0x20000,
+       "L2_SCRATCH exceeds the 4 scratchpad ways (512 KB)")
+ASSERT(ORIGIN(L2_SCRATCH) >= 0x0A000000 &&
+       ORIGIN(L2_SCRATCH) + LENGTH(L2_SCRATCH) <= 0x0A080000,
+       "L2_SCRATCH must lie inside the pinned scratchpad 0x0A000000..0x0A07FFFF")
+
+SECTIONS
+{
+    /*
+     * Reset vector and early initialization code
+     * This section MUST be in eNVM (VMA = LMA) since CPU starts here.
+     * It copies the main code to L2_SCRATCH and jumps there.
+     */
+    .init : ALIGN(0x10)
+    {
+        _start_text = .;
+        KEEP(*(.init))
+        . = ALIGN(0x10);
+    } > FLASH_ENVM
+
+    /*
+     * Main code section - runs from L2_SCRATCH, stored in FLASH_ENVM
+     * The .init code will copy this section to L2_SCRATCH before jumping here.
+     */
+    .text : ALIGN(0x10)
+    {
+        _start_text_sram = .;
+        _start_vector = .;
+        KEEP(*(.isr_vector))
+        KEEP(*(.trap_vector))
+        . = ALIGN(0x10);
+        *(.text*)
+        *(.rodata*)
+        *(.srodata*)
+        . = ALIGN(8);
+        _end_text = .;
+    } > L2_SCRATCH AT > FLASH_ENVM
+
+    /* Provide load address for copying from flash */
+    _stored_text = LOADADDR(.text);
+    _stored_data = LOADADDR(.data);
+
+    /* Initialized data section */
+    .data : ALIGN(0x10)
+    {
+        _start_data = .;
+        KEEP(*(.ramcode*))
+        . = ALIGN(4);
+        *(.data*)
+        . = ALIGN(4);
+        /* Global pointer is set to .sdata + 0x800 for efficient access
+         * to small data using gp-relative addressing (+/- 2KB range) */
+        _global_pointer = . + 0x800;
+        *(.sdata*)
+        . = ALIGN(4);
+        /* Public key store - must be in a copied section so it's available
+         * in L2 SRAM after startup copies .data from eNVM */
+        KEEP(*(.keystore*))
+        . = ALIGN(8);
+        _end_data = .;
+    } > L2_SCRATCH AT > FLASH_ENVM
+
+    /* Uninitialized data section (cleared to zero on startup) */
+    .bss (NOLOAD) : ALIGN(0x10)
+    {
+        _start_bss = .;
+        *(.bss*)
+        *(.sbss*)
+        *(COMMON)
+        . = ALIGN(8);
+        _end_bss = .;
+        _end = .;
+    } > L2_SCRATCH
+
+    /* Placeholder the signed build overwrites with the manifest header;
+     * empty, and absent from the ELF, unless MPFS_ENVM_MANIFEST=1. */
+    .envm_manifest :
+    {
+        KEEP(*(.envm_manifest))
+    } > ENVM_MANIFEST
+}
+
+/* Heap starts after BSS (between _end and stack) */
+PROVIDE(_start_heap = _end);
+
+/* Stack configuration for multi-hart boot
+ * Memory layout at end of L2_SCRATCH:
+ *   [code/data/bss/heap] ... [secondary stacks] [main stack]
+ *
+ * Stack sizes (defined in config or header):
+ *   STACK_SIZE_PER_HART = 8192 (8KB per hart)
+ *   STACK_SIZE = 32K (32KB for main hart E51)
+ *
+ * Total stack area: STACK_SIZE + 4 * STACK_SIZE_PER_HART
+ */
+/* Per-hart stacks for the secondary (U54) park/wake path.  The value is
+ * substituted from the single Makefile STACK_SIZE_PER_HART variable (set in
+ * the target .config), which ALSO drives the startup asm's -DSTACK_SIZE_PER_HART
+ * -- so the wake asm (which computes sp with the C macro) and this symbol
+ * (which places the region) can never disagree.  A historical macro-vs-linker
+ * mismatch placed the woken harts' stacks INSIDE the E51 stack region,
+ * smashing the monitor when SBI HSM started the secondary harts. */
+PROVIDE(STACK_SIZE_PER_HART = @STACK_SIZE_PER_HART@);
+
+/* End of L2 scratchpad */
+PROVIDE(_l2_scratch_end = ORIGIN(L2_SCRATCH) + LENGTH(L2_SCRATCH));
+
+/* Main hart (E51) stack at very end, grows downward */
+PROVIDE(_end_stack = _l2_scratch_end);
+PROVIDE(_main_hart_stack_top = _end_stack);
+PROVIDE(_main_hart_stack_bottom = _main_hart_stack_top - STACK_SIZE);
+
+/* Main hart HLS location (at top of main stack minus 64 bytes) */
+PROVIDE(_main_hart_hls = _main_hart_stack_top - 64);
+
+/* Secondary hart stacks below main hart stack
+ * Hart 1 stack: _main_hart_stack_bottom - STACK_SIZE_PER_HART * 0 to - STACK_SIZE_PER_HART * 1
+ * Hart 2 stack: _main_hart_stack_bottom - STACK_SIZE_PER_HART * 1 to - STACK_SIZE_PER_HART * 2
+ * etc.
+ */
+PROVIDE(_secondary_hart_stack_base = _main_hart_stack_bottom - 4 * STACK_SIZE_PER_HART);
+
+/* Provide symbols for M-mode startup code */
+PROVIDE(__global_pointer$ = _global_pointer);
+
+/* Size of text section to copy (for startup code) */
+PROVIDE(_text_size = _end_text - _start_text_sram);
+
+/* Build-time safety: ensure wolfBoot binary does not overlap image load area.
+ * Image header is loaded at (WOLFBOOT_LOAD_ADDRESS - IMAGE_HEADER_SIZE). */
+ASSERT(_end <= @WOLFBOOT_LOAD_ADDRESS@ - @IMAGE_HEADER_SIZE@,
+    "ERROR: wolfBoot binary overlaps image load area! Increase WOLFBOOT_LOAD_ADDRESS")
+
+/* Build-time safety: keep at least 4 KB between the end of code/data/bss
+ * (_end) and the main hart stack bottom so code growth cannot silently
+ * reach the stack region at the top of L2 Scratch. */
+ASSERT(_end <= _main_hart_stack_bottom - 0x1000,
+    "ERROR: wolfBoot L2 image too close to stack (need 4 KB headroom)")

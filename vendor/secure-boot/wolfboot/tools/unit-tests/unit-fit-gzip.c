@@ -1,0 +1,615 @@
+/* unit-fit-gzip.c
+ *
+ * Unit tests for the FIT-image loader's gzip / unsupported-compression
+ * branches in src/fdt.c. The tests drive fit_load_image_to() and
+ * fit_load_image_ex() against minimal hand-built FIT blobs so the new
+ * fail-closed paths (gzip success, gzip corruption, unknown
+ * compression, and the WOLFBOOT_GZIP-disabled build) all have
+ * deterministic coverage.
+ *
+ * The test binary is built twice from the same source:
+ *   - unit-fit-gzip   (WOLFBOOT_GZIP defined  -> gzip path enabled)
+ *   - unit-fit-nogzip (WOLFBOOT_GZIP undefined -> compile-time fail-closed)
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ *
+ * This file is part of wolfBoot.
+ *
+ * wolfBoot is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfBoot is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
+ */
+
+#include <check.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "../../include/fdt.h"
+
+/* fdt.c calls wolfBoot_printf; supply a silent stub. */
+void wolfBoot_printf(const char *fmt, ...)
+{
+    (void)fmt;
+}
+
+/* Resolves to a variable here so one binary can exercise both branches of
+ * fit_load_kernel() with the override pointing at a real buffer. */
+static uintptr_t kernel_override_addr = 0;
+#define WOLFBOOT_LOAD_KERNEL_ADDRESS kernel_override_addr
+static uintptr_t ramdisk_override_addr = 0;
+#define WOLFBOOT_LOAD_RAMDISK_ADDRESS ramdisk_override_addr
+
+/* Pull in the production code under test. fdt.c's body is gated on
+ * WOLFBOOT_FDT; the Makefile defines that for both build variants.
+ * gzip.c is only needed for the WOLFBOOT_GZIP build. */
+#include "../../src/fdt.c"
+#ifdef WOLFBOOT_GZIP
+#include "../../src/gzip.c"
+#endif
+
+/* ------------------------------------------------------------------------- */
+/* Pre-built FIT fixtures (generated with python; see commit message)        */
+/* ------------------------------------------------------------------------- */
+/* Each FIT contains a single /images/kernel-1 node. The `data` property    */
+/* is either a gzip-compressed or plain copy of `fit_plain_payload`. The    */
+/* `compression` property selects the path under test. `load` is set to    */
+/* 0xC0001000 in most fixtures - tests use fit_load_image_to() which       */
+/* overrides that with a real heap buffer, so the address never gets       */
+/* dereferenced.                                                            */
+
+static const char fit_plain_payload[] = "hello fit test payload\n";
+#define FIT_PLAIN_LEN 23
+
+/* Smallest valid flat device tree, standing in for one the boot firmware
+ * left rather than the FIT. */
+static const uint8_t empty_dtb[] = {
+    0xd0,0x0d,0xfe,0xed, 0x00,0x00,0x00,0x48, 0x00,0x00,0x00,0x38,
+    0x00,0x00,0x00,0x48, 0x00,0x00,0x00,0x28, 0x00,0x00,0x00,0x11,
+    0x00,0x00,0x00,0x10, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x10, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x01,
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x02, 0x00,0x00,0x00,0x09
+};
+
+/* gzip-compressed kernel, load=0xC0001000 */
+static const uint8_t fit_with_gzip_kernel[] = {
+    0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x00, 0x00, 0xe2, 0x00, 0x00, 0x00, 0x38,
+    0x00, 0x00, 0x00, 0xcc, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16,
+    0x00, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x69, 0x6d, 0x61, 0x67,
+    0x65, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x65, 0x72, 0x6e,
+    0x65, 0x6c, 0x2d, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x2b, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x8b, 0x08, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57,
+    0x48, 0xcb, 0x2c, 0x51, 0x28, 0x49, 0x2d, 0x2e, 0x51, 0x28, 0x48, 0xac,
+    0xcc, 0xc9, 0x4f, 0x4c, 0xe1, 0x02, 0x00, 0x54, 0x03, 0xc1, 0x3a, 0x17,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x05,
+    0x00, 0x00, 0x00, 0x05, 0x67, 0x7a, 0x69, 0x70, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x09,
+    0x64, 0x61, 0x74, 0x61, 0x00, 0x63, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73,
+    0x73, 0x69, 0x6f, 0x6e, 0x00, 0x6c, 0x6f, 0x61, 0x64, 0x00,
+};
+
+/* Same as above but one byte of the deflate body is flipped */
+static const uint8_t fit_with_corrupt_gzip[] = {
+    0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x00, 0x00, 0xe2, 0x00, 0x00, 0x00, 0x38,
+    0x00, 0x00, 0x00, 0xcc, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16,
+    0x00, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x69, 0x6d, 0x61, 0x67,
+    0x65, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x65, 0x72, 0x6e,
+    0x65, 0x6c, 0x2d, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x2b, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x8b, 0x08, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0xa8,
+    0x48, 0xcb, 0x2c, 0x51, 0x28, 0x49, 0x2d, 0x2e, 0x51, 0x28, 0x48, 0xac,
+    0xcc, 0xc9, 0x4f, 0x4c, 0xe1, 0x02, 0x00, 0x54, 0x03, 0xc1, 0x3a, 0x17,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x05,
+    0x00, 0x00, 0x00, 0x05, 0x67, 0x7a, 0x69, 0x70, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x09,
+    0x64, 0x61, 0x74, 0x61, 0x00, 0x63, 0x6f, 0x6d, 0x70, 0x72, 0x65, 0x73,
+    0x73, 0x69, 0x6f, 0x6e, 0x00, 0x6c, 0x6f, 0x61, 0x64, 0x00,
+};
+
+/* compression="lzma" - unknown to the loader, must fail closed */
+static const uint8_t fit_with_lzma[] = {
+    0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x00, 0x00, 0xce, 0x00, 0x00, 0x00, 0x38,
+    0x00, 0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16,
+    0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x69, 0x6d, 0x61, 0x67,
+    0x65, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x65, 0x72, 0x6e,
+    0x65, 0x6c, 0x2d, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x00, 0x68, 0x65, 0x6c, 0x6c,
+    0x6f, 0x20, 0x66, 0x69, 0x74, 0x20, 0x74, 0x65, 0x73, 0x74, 0x20, 0x70,
+    0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x6c, 0x7a, 0x6d, 0x61,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x08,
+    0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x09, 0x64, 0x61, 0x74, 0x61, 0x00, 0x63, 0x6f, 0x6d,
+    0x70, 0x72, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x00, 0x6c, 0x6f, 0x61,
+    0x64, 0x00,
+};
+
+/* compression="none" - sanity baseline (plain memcpy) */
+static const uint8_t fit_with_none_comp[] = {
+    0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x00, 0x00, 0xce, 0x00, 0x00, 0x00, 0x38,
+    0x00, 0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16,
+    0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x69, 0x6d, 0x61, 0x67,
+    0x65, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x65, 0x72, 0x6e,
+    0x65, 0x6c, 0x2d, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x17, 0x00, 0x00, 0x00, 0x00, 0x68, 0x65, 0x6c, 0x6c,
+    0x6f, 0x20, 0x66, 0x69, 0x74, 0x20, 0x74, 0x65, 0x73, 0x74, 0x20, 0x70,
+    0x61, 0x79, 0x6c, 0x6f, 0x61, 0x64, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x6e, 0x6f, 0x6e, 0x65,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x08,
+    0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x09, 0x64, 0x61, 0x74, 0x61, 0x00, 0x63, 0x6f, 0x6d,
+    0x70, 0x72, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x00, 0x6c, 0x6f, 0x61,
+    0x64, 0x00,
+};
+
+/* gzip-compressed kernel WITHOUT a `load` property -> exercises the
+ * "compression declared but no destination" fail-closed branch when
+ * called via fit_load_image_ex() (which has no override). */
+static const uint8_t fit_gzip_no_load[] = {
+    0xd0, 0x0d, 0xfe, 0xed, 0x00, 0x00, 0x00, 0xc9, 0x00, 0x00, 0x00, 0x38,
+    0x00, 0x00, 0x00, 0xb8, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x69, 0x6d, 0x61, 0x67,
+    0x65, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6b, 0x65, 0x72, 0x6e,
+    0x65, 0x6c, 0x2d, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x2b, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x8b, 0x08, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x02, 0x03, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57,
+    0x48, 0xcb, 0x2c, 0x51, 0x28, 0x49, 0x2d, 0x2e, 0x51, 0x28, 0x48, 0xac,
+    0xcc, 0xc9, 0x4f, 0x4c, 0xe1, 0x02, 0x00, 0x54, 0x03, 0xc1, 0x3a, 0x17,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x05,
+    0x00, 0x00, 0x00, 0x05, 0x67, 0x7a, 0x69, 0x70, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+    0x00, 0x00, 0x00, 0x09, 0x64, 0x61, 0x74, 0x61, 0x00, 0x63, 0x6f, 0x6d,
+    0x70, 0x72, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x00,
+};
+
+/* ------------------------------------------------------------------------- */
+/* Test cases                                                                */
+/* ------------------------------------------------------------------------- */
+
+
+/* Open a validated view of a hand-built fixture. Returns NULL if the
+ * fixture does not pass fdt_open(), which the callers below treat the
+ * same as a load failure. */
+static fdt_ctx* fit_open(void* blob, uint32_t len)
+{
+    static fdt_ctx ctx;
+
+    if (fdt_open(&ctx, blob, len) != 0) {
+        return NULL;
+    }
+    return &ctx;
+}
+
+#ifdef WOLFBOOT_GZIP
+
+START_TEST(test_fit_to_gzip_success)
+{
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+
+    memset(buf, 0xa5, sizeof(buf));
+    /* fit_with_gzip_kernel is read-only; copy into a writable scratch
+     * since fit_load_image_to() does not modify the FIT, but we still
+     * want a clean buffer per test. */
+    static uint8_t fit_scratch[sizeof(fit_with_gzip_kernel)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_gzip_kernel, sizeof(fit_scratch));
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_eq(ret, buf);
+    ck_assert_int_eq(len, FIT_PLAIN_LEN);
+    ck_assert_int_eq(memcmp(buf, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+START_TEST(test_fit_to_gzip_corrupt_returns_null)
+{
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_corrupt_gzip)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_corrupt_gzip, sizeof(fit_scratch));
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+START_TEST(test_fit_to_none_compression_copies_plain)
+{
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_eq(ret, buf);
+    ck_assert_int_eq(len, FIT_PLAIN_LEN);
+    ck_assert_int_eq(memcmp(buf, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+START_TEST(test_fit_ex_gzip_no_load_returns_null)
+{
+    /* fit_load_image_ex() with no override and no FIT `load` property
+     * must refuse rather than pass compressed bytes through as raw. */
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_gzip_no_load)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_gzip_no_load, sizeof(fit_scratch));
+
+    ret = fit_load_image_ex(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1", &len, 64 * 1024);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+START_TEST(test_fit_kernel_no_override_gzip_no_load_fails)
+{
+    /* No `load`/`entry` and no override: nowhere to decompress to, so the
+     * load must fail rather than hand back compressed bytes. */
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_gzip_no_load)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_gzip_no_load, sizeof(fit_scratch));
+
+    kernel_override_addr = 0;
+    ret = fit_load_kernel(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+                          "kernel-1", &len);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+START_TEST(test_fit_kernel_override_loads_gzip_no_load)
+{
+    /* Same FIT with the override set: it supplies the destination, so the
+     * kernel inflates and the override comes back as the entry point. */
+    static uint8_t dst[64 * 1024] __attribute__((aligned(16)));
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_gzip_no_load)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_gzip_no_load, sizeof(fit_scratch));
+
+    kernel_override_addr = (uintptr_t)dst;
+    ret = fit_load_kernel(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+                          "kernel-1", &len);
+    kernel_override_addr = 0;
+
+    ck_assert_ptr_eq(ret, dst);
+    ck_assert_int_eq(len, FIT_PLAIN_LEN);
+    ck_assert_int_eq(memcmp(dst, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+START_TEST(test_fit_initrd_fixup_on_dtb_outside_the_fit)
+{
+    /* A kernel-only FIT has no `fdt`, so the device tree comes from the
+     * boot firmware - and the initrd fixup must land in THAT tree. */
+    static uint8_t rd_dst[64 * 1024] __attribute__((aligned(16)));
+    static uint8_t dtb[4096] __attribute__((aligned(8)));
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    fdt_ctx dts;
+    const uint8_t *start, *end;
+    int off;
+
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+    memset(dtb, 0, sizeof(dtb));
+    memcpy(dtb, empty_dtb, sizeof(empty_dtb));
+
+    /* Full staging capacity, as the loaders do, so /chosen fits. */
+    ck_assert_int_eq(fdt_open(&dts, dtb, (uint32_t)sizeof(dtb)), 0);
+
+    ramdisk_override_addr = (uintptr_t)rd_dst;
+    ck_assert_int_eq(fit_load_ramdisk(
+        fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+        "kernel-1", &dts), 0);
+    ramdisk_override_addr = 0;
+
+    ck_assert_int_eq(memcmp(rd_dst, fit_plain_payload, FIT_PLAIN_LEN), 0);
+
+    off = fdt_path_offset(&dts, "/chosen");
+    ck_assert_int_ge(off, 0);
+    start = (const uint8_t*)fdt_getprop(&dts, off, "linux,initrd-start", NULL);
+    end = (const uint8_t*)fdt_getprop(&dts, off, "linux,initrd-end", NULL);
+    ck_assert_ptr_nonnull(start);
+    ck_assert_ptr_nonnull(end);
+    ck_assert_uint_eq(fdt_rd64u(start), (uint64_t)(uintptr_t)rd_dst);
+    ck_assert_uint_eq(fdt_rd64u(end),
+        (uint64_t)(uintptr_t)rd_dst + FIT_PLAIN_LEN);
+}
+END_TEST
+
+START_TEST(test_fit_initrd_without_a_dtb_reports_failure)
+{
+    /* Staging the ramdisk but silently skipping the fixup would leave the
+     * kernel with no initrd and nothing on the console to say so. */
+    static uint8_t rd_dst[64 * 1024] __attribute__((aligned(16)));
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+
+    ramdisk_override_addr = (uintptr_t)rd_dst;
+    ck_assert_int_eq(fit_load_ramdisk(
+        fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+        "kernel-1", NULL), -1);
+    ramdisk_override_addr = 0;
+
+    /* The ramdisk itself still landed; only the fixup was impossible. */
+    ck_assert_int_eq(memcmp(rd_dst, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+START_TEST(test_fit_kernel_override_beats_fit_load)
+{
+    /* The override wins over a FIT that does declare `load` (0xC0001000
+     * here, which this process cannot touch). */
+    static uint8_t dst[64 * 1024] __attribute__((aligned(16)));
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_gzip_kernel)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_gzip_kernel, sizeof(fit_scratch));
+
+    kernel_override_addr = (uintptr_t)dst;
+    ret = fit_load_kernel(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+                          "kernel-1", &len);
+    kernel_override_addr = 0;
+
+    ck_assert_ptr_eq(ret, dst);
+    ck_assert_int_eq(len, FIT_PLAIN_LEN);
+    ck_assert_int_eq(memcmp(dst, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+#else /* !WOLFBOOT_GZIP */
+
+START_TEST(test_fit_to_gzip_disabled_returns_null)
+{
+    /* With WOLFBOOT_GZIP undefined, even a perfectly valid gzip stream
+     * must fail closed - the loader has no inflater linked in. */
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_gzip_kernel)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_gzip_kernel, sizeof(fit_scratch));
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+#endif /* WOLFBOOT_GZIP */
+
+START_TEST(test_fit_to_none_unterminated_fails_closed)
+{
+    /* The `compression` property is truncated to 4 bytes ("none" with
+     * no NUL): the declared length no longer covers the terminator.
+     * Before the fix the value was strcmp()'d and the following byte
+     * (the dropped NUL) terminated it, so the subimage was passed
+     * through as raw; a malformed value must fail closed. */
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    uint8_t *p;
+    unsigned i;
+
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+
+    /* the "none" value appears once in the blob (not as a C string -
+     * scan raw bytes); the property length word sits 8 bytes before
+     * the data */
+    p = NULL;
+    for (i = 0; i + 4 <= sizeof(fit_scratch); i++) {
+        if (memcmp(fit_scratch + i, "none", 4) == 0) {
+            p = fit_scratch + i;
+            break;
+        }
+    }
+    ck_assert_ptr_nonnull(p);
+    p[-8] = 0;
+    p[-7] = 0;
+    p[-6] = 0;
+    p[-5] = 4;
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+START_TEST(test_fit_to_lzma_unknown_returns_null)
+{
+    /* Independent of WOLFBOOT_GZIP - any unknown compression scheme is
+     * always rejected. */
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_lzma)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_lzma, sizeof(fit_scratch));
+
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1",
+                            buf, (uint32_t)sizeof(buf), &len);
+    ck_assert_ptr_null(ret);
+}
+END_TEST
+
+/* An uncompressed ("none") subimage larger than the staging bound must be
+ * rejected instead of overflowing the destination. */
+START_TEST(test_fit_to_none_oversized_rejected)
+{
+    uint8_t buf[64];
+    int len = -1;
+    void *ret;
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+
+    memset(buf, 0xA5, sizeof(buf));
+    /* payload is FIT_PLAIN_LEN (23) bytes; bound the destination below it */
+    ret = fit_load_image_to(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)), "kernel-1", buf, 8, &len);
+    ck_assert_ptr_null(ret);
+    /* nothing may be written at or past the out_max bound */
+    ck_assert_uint_eq(buf[8], 0xA5);
+}
+END_TEST
+
+/* fit_load_kernel()'s override path with an uncompressed kernel: the only
+ * shape a build without WOLFBOOT_GZIP can stage, and the one a FIT that
+ * declares neither `load` nor `entry` most often carries. */
+START_TEST(test_fit_kernel_override_loads_uncompressed)
+{
+    static uint8_t dst[64 * 1024] __attribute__((aligned(16)));
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    int len = -1;
+    void *ret;
+
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+    memset(dst, 0, FIT_PLAIN_LEN + 1);
+
+    kernel_override_addr = (uintptr_t)dst;
+    ret = fit_load_kernel(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+                          "kernel-1", &len);
+    kernel_override_addr = 0;
+
+    ck_assert_ptr_eq(ret, dst);
+    ck_assert_int_eq(len, FIT_PLAIN_LEN);
+    ck_assert_int_eq(memcmp(dst, fit_plain_payload, FIT_PLAIN_LEN), 0);
+}
+END_TEST
+
+/* The raw copy stops below the staged FIT just as the inflate does: an
+ * override under the FIT's own `data` would otherwise overwrite the blob
+ * that the later `fdt` and `ramdisk` lookups still read from. */
+START_TEST(test_fit_kernel_override_into_the_fit_rejected)
+{
+    static uint8_t fit_scratch[sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    uint8_t *payload = NULL;
+    int len = -1;
+    void *ret;
+    unsigned i;
+
+    memcpy(fit_scratch, fit_with_none_comp, sizeof(fit_scratch));
+    for (i = 0; i + FIT_PLAIN_LEN <= sizeof(fit_scratch); i++) {
+        if (memcmp(fit_scratch + i, fit_plain_payload, FIT_PLAIN_LEN) == 0) {
+            payload = fit_scratch + i;
+            break;
+        }
+    }
+    ck_assert_ptr_nonnull(payload);
+
+    /* 8 bytes of headroom for a 23-byte payload. */
+    kernel_override_addr = (uintptr_t)(payload - 8);
+    ret = fit_load_kernel(fit_open(fit_scratch, (uint32_t)sizeof(fit_scratch)),
+                          "kernel-1", &len);
+    kernel_override_addr = 0;
+
+    ck_assert_ptr_null(ret);
+    ck_assert_int_eq(memcmp(fit_scratch, fit_with_none_comp,
+        sizeof(fit_scratch)), 0);
+}
+END_TEST
+
+/* The bound is the start of the blob, not its `data` pointer: a destination
+ * below the FIT would otherwise be allowed to run over the header and
+ * structure block while the `fdt` and `ramdisk` lookups still need them. */
+START_TEST(test_fit_kernel_override_under_the_fit_rejected)
+{
+    /* The FIT is placed inside a larger arena so there is addressable
+     * space below the blob to aim the override at. */
+    static uint8_t arena[256 + sizeof(fit_with_none_comp)] __attribute__((aligned(4)));
+    uint8_t *blob = arena + 200;
+    int len = -1;
+    void *ret;
+
+    memset(arena, 0, sizeof(arena));
+    memcpy(blob, fit_with_none_comp, sizeof(fit_with_none_comp));
+
+    /* 8 bytes of headroom for a 23-byte payload. */
+    kernel_override_addr = (uintptr_t)(blob - 8);
+    ret = fit_load_kernel(fit_open(blob, (uint32_t)sizeof(fit_with_none_comp)),
+                          "kernel-1", &len);
+    kernel_override_addr = 0;
+
+    ck_assert_ptr_null(ret);
+    ck_assert_int_eq(memcmp(blob, fit_with_none_comp,
+        sizeof(fit_with_none_comp)), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------------- */
+
+static Suite *fit_gzip_suite(void)
+{
+    Suite *s = suite_create("fit_gzip");
+    TCase *tc = tcase_create("fit_gzip");
+
+#ifdef WOLFBOOT_GZIP
+    tcase_add_test(tc, test_fit_to_gzip_success);
+    tcase_add_test(tc, test_fit_to_gzip_corrupt_returns_null);
+    tcase_add_test(tc, test_fit_to_none_compression_copies_plain);
+    tcase_add_test(tc, test_fit_ex_gzip_no_load_returns_null);
+    tcase_add_test(tc, test_fit_kernel_no_override_gzip_no_load_fails);
+    tcase_add_test(tc, test_fit_kernel_override_loads_gzip_no_load);
+    tcase_add_test(tc, test_fit_kernel_override_beats_fit_load);
+    tcase_add_test(tc, test_fit_initrd_fixup_on_dtb_outside_the_fit);
+    tcase_add_test(tc, test_fit_initrd_without_a_dtb_reports_failure);
+#else
+    tcase_add_test(tc, test_fit_to_gzip_disabled_returns_null);
+#endif
+    tcase_add_test(tc, test_fit_to_lzma_unknown_returns_null);
+    tcase_add_test(tc, test_fit_to_none_unterminated_fails_closed);
+    tcase_add_test(tc, test_fit_to_none_oversized_rejected);
+    tcase_add_test(tc, test_fit_kernel_override_loads_uncompressed);
+    tcase_add_test(tc, test_fit_kernel_override_into_the_fit_rejected);
+    tcase_add_test(tc, test_fit_kernel_override_under_the_fit_rejected);
+
+    suite_add_tcase(s, tc);
+    return s;
+}
+
+int main(void)
+{
+    int fails;
+    SRunner *sr = srunner_create(fit_gzip_suite());
+    srunner_run_all(sr, CK_NORMAL);
+    fails = srunner_ntests_failed(sr);
+    srunner_free(sr);
+    return fails ? 1 : 0;
+}
