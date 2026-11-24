@@ -114,3 +114,30 @@ def seed_identity(entries: list) -> None:
 
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
+
+def lookup_firmware(hash_hex: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM firmware_registry WHERE hash = ?", (hash_hex,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def lookup_cves(hash_hex: str) -> list:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM cve_entries WHERE firmware_hash = ?", (hash_hex,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def lookup_identity(device_id: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM identity_registry WHERE device_id = ?", (device_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
