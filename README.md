@@ -35,8 +35,14 @@ chargeguard/
 ├── dashboard/           # FastAPI backend + WebSocket stream + web UI (C8)
 ├── simulator/           # Attack harness (C9) and charger simulator (C10)
 ├── firmware/            # Firmware image and key generator
-└── db/                  # SQLite registry: firmware, CVEs, identities, runs
+├── db/                  # SQLite registry: firmware, CVEs, identities, runs
+├── attestation/         # TPM 2.0 attestation layer (pluggable backends + verifiers)
+├── third_party/tpm/     # Vendored TPM stacks: tpm2-tss, wolfTPM, Keylime, IBM SW TPM
+└── tests/               # Unit tests
 ```
+
+See [`attestation/README.md`](attestation/README.md) for the TPM layer and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for third-party licenses.
 
 ## Getting started
 
