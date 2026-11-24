@@ -1,0 +1,26 @@
+{
+   "identifier": "jq",
+   "parsing_mode": [
+      "normal"
+   ],
+   "licenses": [
+      "unknown"
+   ],
+   "grep_commands": [
+      "^jq-[0-9](\\.[0-9]+)+?$",
+      "'\"^jq\\ -\\ commandline\\ JSON\\ processor\\ \\[version\\ %s\\]$\"AND\"^[0-9](\\.[0-9]+)+?$\"'"
+   ],
+   "vendor_names": [
+      "jq_project"
+   ],
+   "product_names": [
+      "jq"
+   ],
+   "version_extraction": [
+      "sed -r 's/jq-([0-9](\\.[0-9]+)+?)$/:jq_project:jq:\\1/'",
+      "sed -r 's/([0-9](\\.[0-9]+)+?)/:jq_project:jq:\\1/'"
+   ],
+   "affected_paths": [
+      "NA"
+   ]
+}

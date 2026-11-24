@@ -1,0 +1,460 @@
+#!/bin/bash -p
+
+# EMBA - EMBEDDED LINUX ANALYZER
+#
+# Copyright 2024-2026 Siemens Energy AG
+#
+# EMBA comes with ABSOLUTELY NO WARRANTY. This is free software, and you are
+# welcome to redistribute it under the terms of the GNU General Public License.
+# See LICENSE file for usage of this software.
+#
+# EMBA is licensed under GPLv3
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Author(s): Michael Messner
+
+# Description:  This module is using Ghidra to generate decompiled code from the firmware binaries.
+#               This module uses the ghidra script Haruspex.java (https://github.com/0xdea/ghidra-scripts)
+#               The generated source code is further analysed with semgrep and the rules provided by 0xdea
+#               (https://github.com/0xdea/semgrep-rules)
+
+S16_ghidra_decompile_checks() {
+  # export MAX_EXT_CHECK_BINS=3
+  module_log_init "${FUNCNAME[0]}"
+  module_title "Check decompiled binary source code for vulnerabilities"
+  pre_module_reporter "${FUNCNAME[0]}"
+
+  # Further testing needed:
+  export INTERNAL_LINKING=1
+  if [[ "${BINARY_EXTENDED}" -ne 1 ]]; then
+    print_output "[-] ${FUNCNAME[0]} - BINARY_EXTENDED not set to 1. You can set it up via a scan-profile."
+    module_end_log "${FUNCNAME[0]}" 0
+    return
+  fi
+
+  if ! [[ -d "${EXT_DIR}"/ghidra_scripts ]]; then
+    print_output "[-] ${FUNCNAME[0]} - missing ghidra_scripts dependencies, no ${EXT_DIR}/ghidra_scripts"
+    module_end_log "${FUNCNAME[0]}" 0
+    return
+  fi
+
+  local lBIN_TO_CHECK=""
+  local lTMP_PID=""
+  local lVULN_COUNTER=0
+  local lWAIT_PIDS_S16_ARR=()
+  local lNAME=""
+  local lBINS_CHECKED_ARR=()
+
+  # the blacklist elements are handled as regex in the form *pattern*
+  local lBIN_BLACKLIST_ARR=("libc" "coreutils")
+
+  if [[ "${FULL_TEST}" -ne 1 ]]; then
+    # we need to wait in default mode for the results of S13 and S14
+    module_wait "S13_weak_func_check"
+    module_wait "S14_weak_func_radare_check"
+  fi
+
+  # start timer for track the runtime of the module
+  export SECONDS=0
+  # default behavior:
+  # Option 1: no minimum runtime -> MAX_EXT_CHECK_BINS binaries are tested
+  # Option 2: define S16_MIN_RUNTIME (in seconds) in scan-profile
+  local lS16_MIN_RUNTIME="${S16_MIN_RUNTIME:-0}"
+  # if we have a AI_MIN_RUNTIME set and this is bigger then our current S16_MIN_RUNTIME we adjust S16 to the AI runtime
+  if [[ "${AI_OPTION}" -gt 0 ]]; then
+    AI_MIN_RUNTIME="$(convert_timeformat "${AI_MIN_RUNTIME:-0s}")"
+    if [[ "${lS16_MIN_RUNTIME}" -lt "${AI_MIN_RUNTIME}" ]]; then
+      print_output "[*] S16 - setting minimum runtime to AI_MIN_RUNTIME - ${AI_MIN_RUNTIME} seconds"
+      lS16_MIN_RUNTIME="${AI_MIN_RUNTIME}"
+    fi
+  fi
+
+  # we are going to use the lBINARIES_ARR for further analysis. This includes binaries with known usage of strcpy/system in the beginning
+  # Afterwards we add all the other binaries to ensure we are going to test everything if we have enough time
+  local lBINARIES_ARR=()
+  local lBINARIES_ALL_ARR=()
+  if [[ "$(wc -l 2>/dev/null <"${S13_CSV_LOG}")" -gt 1 ]] || [[ "$(wc -l 2>/dev/null <"${S14_CSV_LOG}")" -gt 1 ]] || [[ "$(wc -l 2>/dev/null <"${S15_CSV_LOG}")" -gt 1 ]]; then
+    # usually binaries with strcpy or system calls are more interesting for further analysis
+    # to keep analysis time low we only check these bins
+    mapfile -t lBINARIES_ARR < <(grep -h "strcpy\|system" "${S13_CSV_LOG}" "${S14_CSV_LOG}" "${S15_CSV_LOG}" 2>/dev/null | sort -k 3 -t ';' -n -r | awk '{print $1}' || true)
+  fi
+  mapfile -t lBINARIES_ALL_ARR < <(grep -v "ASCII text\|Unicode text" "${P99_CSV_LOG}" | grep ";ELF" | cut -d ';' -f2 || true)
+  # as we do duplicate checking later on we do not care about duplicate entries now
+  lBINARIES_ARR=("${lBINARIES_ARR[@]}" "${lBINARIES_ALL_ARR[@]}")
+
+  for lBIN_TO_CHECK in "${lBINARIES_ARR[@]}"; do
+    lNAME=$(basename "${lBIN_TO_CHECK}" 2>/dev/null)
+    if [[ "${FULL_TEST}" -ne 1 ]]; then
+      # first of all we check our binary name against our blacklist
+      # the blacklist are handled as regex in the form *pattern*
+      local lBIN_BLACKLIST=""
+      for lBIN_BLACKLIST in "${lBIN_BLACKLIST_ARR[@]}"; do
+        if [[ "${lNAME}" == *"${lBIN_BLACKLIST}"* ]]; then
+          continue 2
+        fi
+      done
+    fi
+
+    if [[ -f "${BASE_LINUX_FILES}" ]]; then
+      # if we have the base linux config file we only test non known Linux binaries
+      # with this we do not waste too much time on open source Linux stuff
+      if grep -F -x -q -- "${lNAME}" "${BASE_LINUX_FILES}" 2>/dev/null; then
+        continue
+      fi
+    fi
+
+    # from s13 and s14 we get a path like ./path/to/file
+    # let's remove the ^.
+    lBIN_TO_CHECK="${lBIN_TO_CHECK#\.}"
+
+    if ! [[ -f "${lBIN_TO_CHECK}" ]]; then
+      lBIN_TO_CHECK=$(grep -F "$(escape_echo "${lBIN_TO_CHECK}")" "${P99_CSV_LOG}" | cut -d ';' -f2 | sort -u | head -1 || true)
+    fi
+    if ! [[ -f "${lBIN_TO_CHECK}" ]]; then
+      continue
+    fi
+    # ensure we have not tested this binary entry
+    local lBIN_MD5=""
+    lBIN_MD5="$(md5sum "${lBIN_TO_CHECK}" | awk '{print $1}')"
+    if [[ "${lBINS_CHECKED_ARR[*]}" == *"${lBIN_MD5}"* ]]; then
+      # print_output "[*] ${ORANGE}${lBIN_TO_CHECK}${NC} already tested with ghidra/semgrep" "no_log"
+      continue
+    fi
+    # print_output "[*] Testing ${lBIN_TO_CHECK} with ghidra/semgrep"
+    if [[ -d "/tmp/haruspex_${lNAME}" ]]; then
+      print_output "[*] Info: Temporary directory already exists for binary ${ORANGE}${lNAME}${NC} - skipping analysis" "no_log"
+      continue
+    fi
+    lBINS_CHECKED_ARR+=("${lBIN_MD5}")
+    ghidra_analyzer "${lBIN_TO_CHECK}" "${lS16_MIN_RUNTIME}" "${SECONDS}" &
+    lTMP_PID="$!"
+    lWAIT_PIDS_S16_ARR+=("${lTMP_PID}")
+    max_pids_protection "$(("${MAX_MOD_THREADS}" / 3))" lWAIT_PIDS_S16_ARR
+
+    # in case our module runtime is already longer as the min runtime we check if we have tested enough binaries
+    # enough binaries are tested as soon as our checked array has more elements then defined in MAX_EXT_CHECK_BINS
+    local lMODULE_RUNTIME="${SECONDS}"
+    if [[ "${lMODULE_RUNTIME}" -gt "${lS16_MIN_RUNTIME}" ]]; then
+      # we stop checking after testing MAX_EXT_CHECK_BINS binaries
+      if [[ "${#lBINS_CHECKED_ARR[@]}" -ge "${MAX_EXT_CHECK_BINS}" ]] && [[ "${FULL_TEST}" -ne 1 ]]; then
+        print_error "[-] S16 Module runtime limitation kicked - current runtime ${lMODULE_RUNTIME} -gt module runtime ${lS16_MIN_RUNTIME}"
+        print_output "[*] ${MAX_EXT_CHECK_BINS} binaries already analysed - ending Ghidra binary analysis now."
+        print_output "[*] For complete analysis enable FULL_TEST option in your scanning profile."
+        break
+      fi
+    fi
+  done
+
+  wait_for_pid "${lWAIT_PIDS_S16_ARR[@]}"
+
+  # cleanup - remove the rest without issues now
+  rm -r -- /tmp/haruspex_* 2>/dev/null || true
+
+  if [[ -n "$(find "${LOG_PATH_MODULE}" -maxdepth 1 -type f -name "semgrep_*.csv" -print -quit)" ]]; then
+    # can't use grep -c here as it counts on file base and we need the number of semgrep-rules
+    # shellcheck disable=SC2126
+    lVULN_COUNTER=$(wc -l "${LOG_PATH_MODULE}"/semgrep_*.csv | tail -n1 | awk '{print $1}' || echo 0)
+  fi
+  if [[ "${lVULN_COUNTER}" -gt 0 ]]; then
+    print_ln
+    sub_module_title "Results - Ghidra decompiled code analysis via Semgrep"
+    print_output "[+] Found ""${ORANGE}""${lVULN_COUNTER}""${GREEN}"" possible vulnerabilities (${ORANGE}via semgrep on Ghidra decompiled code${GREEN}) in ""${ORANGE}""${#lBINS_CHECKED_ARR[@]}""${GREEN}"" tested binaries:""${NC}"
+    local lVULN_CAT_CNT=0
+    local lVULN_CATS_ARR=()
+    local lVULN_CATEGORY=""
+    mapfile -t lVULN_CATS_ARR < <(grep -h -o "external.semgrep-rules-0xdea.rules.c.raptor-[a-zA-Z0-9_\-]*" "${LOG_PATH_MODULE}"/semgrep_*.csv | sort -u)
+    for lVULN_CATEGORY in "${lVULN_CATS_ARR[@]}"; do
+      lVULN_CAT_CNT=$(grep -h -o "${lVULN_CATEGORY}" "${LOG_PATH_MODULE}"/semgrep_*.csv | wc -l)
+      local lVULN_CATEGORY_STRIPPED=${lVULN_CATEGORY//external.semgrep-rules-0xdea.rules.c.raptor-/}
+      print_output "$(indent "${GREEN}${lVULN_CATEGORY_STRIPPED}${ORANGE} - ${lVULN_CAT_CNT} times.${NC}")"
+    done
+    print_bar
+  fi
+
+  write_log "[*] Statistics:${lVULN_COUNTER}:${#lBINS_CHECKED_ARR[@]}"
+  module_end_log "${FUNCNAME[0]}" "${lVULN_COUNTER}"
+}
+
+ghidra_analyzer() {
+  local lBINARY="${1:-}"
+  local lS16_GHIDRA_MAX_RUNTIME="${2:-}"
+  export SECONDS="${3:-}"
+
+  local lNAME=""
+  local lGPT_PRIO_=2
+  local lS16_SEMGREP_ISSUES=0
+  local lHARUSPEX_FILE_ARR=()
+  local lWAIT_PIDS_S16_1=()
+  # just in case Ghidra hangs on a binary
+  local lGHIDRA_OPTS_ARR=()
+
+  if ! [[ -f "${lBINARY}" ]]; then
+    return
+  fi
+
+  lNAME=$(basename "${lBINARY}" 2>/dev/null)
+
+  if [[ -d "/tmp/haruspex_${lNAME}" ]]; then
+    print_output "[*] Info: Temporary directory already exists for binary ${ORANGE}${lNAME}${NC} - skipping analysis" "no_log"
+    return
+  fi
+
+  if [[ $(grep -F "$(escape_echo "${lBIN_TO_CHECK}")" "${P99_CSV_LOG}" | cut -d ';' -f8 | sort -u | head -1 || true) == *"Tricore"* ]]; then
+    print_output "[*] Tricore processor detected - adjusting Ghidra parameters" "no_log"
+    lGHIDRA_OPTS_ARR+=("-processor" "tricore:LE:32:default" "-cspec" "default")
+  fi
+
+  print_output "[*] Extracting decompiled code from binary ${ORANGE}${lNAME} / ${lBINARY}${NC} with Ghidra" "no_log"
+  local lIDENTIFIER="${RANDOM}"
+  if [[ ! -d "${LOG_PATH_MODULE}" ]]; then
+    mkdir -- "${LOG_PATH_MODULE}"
+  fi
+
+  # adjust the max runtime for Ghidra with the current runtime
+  if [[ "${lS16_GHIDRA_MAX_RUNTIME}" -eq 0 ]]; then
+    # GHIDRA_DECOMPILE_RUNTIME includes unit
+    lS16_GHIDRA_MAX_RUNTIME="${GHIDRA_DECOMPILE_RUNTIME}"
+  else
+    lS16_GHIDRA_MAX_RUNTIME=$((lS16_GHIDRA_MAX_RUNTIME - SECONDS))
+    # minimum Ghidra runtime of 60 seconds
+    if [[ "${lS16_GHIDRA_MAX_RUNTIME}" -lt 60 ]]; then
+      print_error "[-] Out of time for decompiling code from binary ${ORANGE}${lNAME} / ${lBINARY}${NC} with Ghidra - skipping"
+      rm -f "/tmp/haruspex_${lNAME}" 2>/dev/null
+      return
+    else
+      # add unit for our calculated time
+      lS16_GHIDRA_MAX_RUNTIME+="s"
+    fi
+  fi
+  print_output "[*] Starting Ghidra for binary ${ORANGE}${lNAME}${NC} with runtime ${ORANGE}${lS16_GHIDRA_MAX_RUNTIME}${NC}" "no_log"
+  timeout --preserve-status --signal SIGINT "${lS16_GHIDRA_MAX_RUNTIME}" "${GHIDRA_PATH}"/support/analyzeHeadless "${LOG_PATH_MODULE}" "ghidra_${lNAME}_${lIDENTIFIER}" -import "${lBINARY}" -log "${LOG_PATH_MODULE}"/ghidra_"${lNAME}"_"${lIDENTIFIER}".txt -scriptPath "${EXT_DIR}"/ghidra_scripts -postScript Haruspex "${lGHIDRA_OPTS_ARR[@]}" || print_error "[-] Error detected while Ghidra Headless run for ${lNAME}"
+
+  # Ghidra cleanup:
+  if [[ -d "${LOG_PATH_MODULE}/ghidra_${lNAME}_${lIDENTIFIER}.rep" ]]; then
+    rm -r -- "${LOG_PATH_MODULE}/ghidra_${lNAME}_${lIDENTIFIER}.rep" || print_error "[-] Error detected while removing Ghidra log file ghidra_${lNAME}.rep"
+  fi
+  if [[ -f "${LOG_PATH_MODULE}/ghidra_${lNAME}_${lIDENTIFIER}.gpr" ]]; then
+    rm -r -- "${LOG_PATH_MODULE}/ghidra_${lNAME}_${lIDENTIFIER}.gpr" || print_error "[-] Error detected while removing Ghidra log file ghidra_${lNAME}.gpr"
+  fi
+
+  # if Ghidra was not able to produce code we can return now:
+  if ! [[ -d /tmp/haruspex_"${lNAME}" ]]; then
+    print_output "[-] No Ghidra decompiled code for further analysis of binary ${ORANGE}${lNAME}${NC} available ..." "no_log"
+    return
+  fi
+
+  local lSEMGREPLOG="${LOG_PATH_MODULE}/semgrep_${lNAME}_${RANDOM}.json"
+  if [[ -f "${lSEMGREPLOG}" ]]; then
+    local lSEMGREPLOG="${LOG_PATH_MODULE}/semgrep_${lNAME}_${RANDOM}.json"
+  fi
+  local lSEMGREPLOG_CSV="${lSEMGREPLOG/\.json/\.csv}"
+  local lSEMGREPLOG_TXT="${lSEMGREPLOG/\.json/\.log}"
+
+  if [[ -f "${S12_LOG}" ]]; then
+    # we start the log file with the binary protection mechanisms
+    # FUNC_LOG is currently global for log_bin_hardening from modules/S13_weak_func_check.sh -> todo as parameter
+    export FUNC_LOG="${lSEMGREPLOG_TXT}"
+    write_log "\\n" "${lSEMGREPLOG_TXT}"
+    log_bin_hardening "${lBINARY}" "${lSEMGREPLOG_TXT}"
+    write_log "\\n-----------------------------------------------------------------\\n" "${lSEMGREPLOG_TXT}"
+  fi
+
+  # cleanup filenames
+  local lFPATH_ARR=()
+  mapfile -t lFPATH_ARR < <(find /tmp/haruspex_"${lNAME}" -type f)
+  local lFNAME=""
+  for FPATH in "${lFPATH_ARR[@]}"; do
+    lFNAME=$(basename "${FPATH}")
+    if ! [[ -f /tmp/haruspex_"${lNAME}"/"${lFNAME//[^A-Za-z0-9._-]/_}" ]]; then
+      mv "${FPATH}" /tmp/haruspex_"${lNAME}"/"${lFNAME//[^A-Za-z0-9._-]/_}" || true
+    fi
+  done
+
+  semgrep --disable-version-check --metrics=off --severity ERROR --severity WARNING --json --config "${EXT_DIR}/semgrep-rules-0xdea/rules" "/tmp/haruspex_${lNAME}" >>"${lSEMGREPLOG}" || print_error "[-] Semgrep error detected on testing ${lNAME}"
+
+  # check if there are more details in our log (not only the header with the binary protections)
+  if [[ "$(wc -l <"${lSEMGREPLOG}")" -gt 0 ]]; then
+    jq -rc '.results[] | "\(.path),\(.check_id),\(.end.line),\(.extra.message)"' "${lSEMGREPLOG}" >>"${lSEMGREPLOG_CSV}" || true
+    lS16_SEMGREP_ISSUES=$(wc -l <"${lSEMGREPLOG_CSV}" || true)
+
+    if [[ "${lS16_SEMGREP_ISSUES}" -gt 0 ]]; then
+      # check for known linux files
+      if [[ -f "${BASE_LINUX_FILES}" ]]; then
+        # if we have the base linux config file we are checking it:
+        if grep -F -x -q -- "${lNAME}" "${BASE_LINUX_FILES}" 2>/dev/null; then
+          # shellcheck disable=SC2153
+          print_output "[+] Found ${ORANGE}${lS16_SEMGREP_ISSUES} issues${GREEN} in native binary ${ORANGE}${lNAME}${GREEN} (${CYAN}common linux file: yes${GREEN})${NC}" "" "${lSEMGREPLOG_TXT}"
+        else
+          print_output "[+] Found ${ORANGE}${lS16_SEMGREP_ISSUES} issues${GREEN} in native binary ${ORANGE}${lNAME}${GREEN} (${RED}common linux file: no${GREEN})${NC}" "" "${lSEMGREPLOG_TXT}"
+        fi
+      else
+        print_output "[+] Found ${ORANGE}${lS16_SEMGREP_ISSUES} issues${GREEN} in native binary ${ORANGE}${lNAME}${NC}" "" "${lSEMGREPLOG_TXT}"
+      fi
+
+      # highlight security findings in the main semgrep log:
+      # sed -i -r "s/.*external\.semgrep-rules-0xdea.*/\x1b[32m&\x1b[0m/" "${lSEMGREPLOG}"
+      lGPT_PRIO_=$((lGPT_PRIO_ + 1))
+      # Todo: highlight the identified code areas in the decompiled code
+    else
+      print_output "[-] No C/C++ issues found for binary ${ORANGE}${lNAME}${NC}" "no_log"
+      rm -- "${lSEMGREPLOG}" || print_error "[-] Error detected while removing ${lSEMGREPLOG}"
+      rm -rf -- "/tmp/haruspex_${lNAME}" 2>/dev/null
+      return
+    fi
+  else
+    rm -- "${lSEMGREPLOG}" || print_error "[-] Error detected while removing ${lSEMGREPLOG}"
+    rm -rf -- "/tmp/haruspex_${lNAME}" 2>/dev/null
+    return
+  fi
+
+  # write the logs
+  if [[ -d /tmp/haruspex_"${lNAME}" ]] && [[ -f "${lSEMGREPLOG}" ]]; then
+    mapfile -t lHARUSPEX_FILE_ARR < <(find /tmp/haruspex_"${lNAME}" -type f || true)
+    # we only store decompiled code with issues:
+    if ! [[ -d "${LOG_PATH_MODULE}"/haruspex_"${lNAME}" ]]; then
+      mkdir -- "${LOG_PATH_MODULE}"/haruspex_"${lNAME}" || print_error "[-] Error detected while creating ${LOG_PATH_MODULE}/haruspex_${lNAME}"
+    fi
+    for lHARUSPEX_FILE in "${lHARUSPEX_FILE_ARR[@]}"; do
+      # threading is currently not working because of mangled output
+      # we need to rewrite the logging functionality in here to provide threading
+      s16_semgrep_logger "${lHARUSPEX_FILE}" "${lNAME}" "${lSEMGREPLOG}" "${lGPT_PRIO_}" &
+      local lTMP_PID="$!"
+      lWAIT_PIDS_S16_1+=("${lTMP_PID}")
+      max_pids_protection "${MAX_MOD_THREADS}" lWAIT_PIDS_S16_1
+    done
+
+    wait_for_pid "${lWAIT_PIDS_S16_1[@]}"
+    s16_finish_the_log "${lSEMGREPLOG}" "${lNAME}" &
+    local lTMP_PID="$!"
+    lWAIT_PIDS_S16_ARR+=("${lTMP_PID}")
+  fi
+}
+
+# function is just for speeding up the process
+s16_finish_the_log() {
+  local lSEMGREPLOG="${1:-}"
+  local lNAME="${2:-}"
+  local lSEMGREPLOG_TXT="${lSEMGREPLOG/\.json/\.log}"
+  local lTMP_FILE=""
+
+  for lTMP_FILE in "${lSEMGREPLOG/\.json/}"_"${lNAME}"*.tmp; do
+    if [[ -f "${lTMP_FILE}" ]]; then
+      cat "${lTMP_FILE}" >>"${lSEMGREPLOG_TXT}" || print_error "[-] Error in logfile processing - ${lTMP_FILE}"
+      rm -- "${lTMP_FILE}" || true
+    fi
+  done
+}
+
+s16_semgrep_logger() {
+  local lHARUSPEX_FILE="${1:-}"
+  local lNAME="${2:-}"
+  local lSEMGREPLOG="${3:-}"
+  local lGPT_PRIO="${4:-}"
+
+  local lSEMGREPLOG_CSV="${lSEMGREPLOG/\.json/\.csv}"
+  local lSEMGREPLOG_TXT="${lSEMGREPLOG/\.json/\.log}"
+  local lGPT_ANCHOR=""
+  local lCODE_LINE=""
+  local lLINE_NR=""
+  local lHARUSPEX_FILE_NAME=""
+
+  lHARUSPEX_FILE_NAME="$(basename "${lHARUSPEX_FILE}")"
+  local lSEMGREPLOG_TMP="${lSEMGREPLOG/\.json/}_${lNAME}_${lHARUSPEX_FILE_NAME::100}_${RANDOM}.tmp"
+
+  if [[ ! -f "${lSEMGREPLOG_CSV}" ]]; then
+    return
+  fi
+
+  # we only handle decompiled code files with semgrep issues, otherwise we move to the next function
+  # print_output "[*] Testing ${lHARUSPEX_FILE_NAME} against semgrep log ${lSEMGREPLOG}"
+  # for internal linking we need all the files in the future - currently we do not need further processing
+  if [[ "${INTERNAL_LINKING:-0}" -eq 0 ]]; then
+    if ! grep -q "${lHARUSPEX_FILE_NAME}" "${lSEMGREPLOG_CSV}"; then
+      return
+    fi
+  fi
+  if [[ -f "${lHARUSPEX_FILE}" ]]; then
+    mv "${lHARUSPEX_FILE}" "${LOG_PATH_MODULE}"/haruspex_"${lNAME}" || print_error "[-] Error storing Ghidra decompiled code for ${lNAME} in log directory"
+  fi
+  # print_output "[*] moved ${lHARUSPEX_FILE} to ${LOG_PATH_MODULE}/haruspex_${lNAME}" "no_log"
+  if [[ -f "${lSEMGREPLOG}" ]]; then
+    local lC_SRC_FCT="${LOG_PATH_MODULE}/haruspex_${lNAME}/${lHARUSPEX_FILE_NAME}"
+    # now we rebuild our logfile
+    while IFS="," read -r lPATH lCHECK_ID lLINE_NR lMESSAGE; do
+      if [[ "${lPATH}" != *"${lHARUSPEX_FILE_NAME}"* ]]; then
+        continue
+      fi
+
+      write_log "[+] Identified source function: ${ORANGE}${lC_SRC_FCT}${NC}" "${lSEMGREPLOG_TMP}"
+      write_link "${lC_SRC_FCT}" "${lSEMGREPLOG_TMP}"
+      write_log "$(indent "$(indent "Semgrep rule: ${ORANGE}${lCHECK_ID}${NC}")")" "${lSEMGREPLOG_TMP}"
+      write_log "$(indent "$(indent "Issue description:\\n${lMESSAGE}")")" "${lSEMGREPLOG_TMP}"
+      write_log "" "${lSEMGREPLOG_TMP}"
+      if [[ -f "${lC_SRC_FCT}" ]]; then
+        # extract the identified code line from the source code to show it in the overview page
+        lCODE_LINE="$(strip_color_codes "$(sed -n "${lLINE_NR}"p "${lC_SRC_FCT}" 2>/dev/null)")"
+        shopt -s extglob
+        lCODE_LINE="${lCODE_LINE##+([[:space:]])}"
+        lCODE_LINE="$(tr -d '\0' <<<"${lCODE_LINE}")"
+        lCODE_LINE="${lCODE_LINE//$'\n'/}"
+        shopt -u extglob
+        # with a normal echo we automatically remove the null bytes which caused issues
+        # shellcheck disable=SC2116
+        lLINE_NR="$(echo "${lLINE_NR}")"
+        # enforce it now
+        lLINE_NR="$(tr -d '\0' <<<"${lLINE_NR}")"
+        # color and mark the identified line in the source file:
+        if [[ "${lCODE_LINE}" != *"possible issue identified - semgrep"* ]]; then
+          sed -i -r "${lLINE_NR}s/.*/\x1b[32m&\x1b[0m   \/\/possible issue identified - semgrep/" "${lC_SRC_FCT}" || true
+        fi
+        # this is the output for the report
+        write_log "$(indent "$(indent "${GREEN}${lLINE_NR}${NC} - ${ORANGE}${lCODE_LINE}${NC}")")" "${lSEMGREPLOG_TMP}"
+
+        # lBINARY;source function;semgrep rule;code line nr; code line
+        write_csv_log "${lNAME}" "${lHARUSPEX_FILE_NAME}" "${lCHECK_ID}" "${lLINE_NR}" "${lCODE_LINE/\;/}" "${lMESSAGE/\;/}"
+
+      fi
+      write_log "\\n-----------------------------------------------------------------\\n" "${lSEMGREPLOG_TMP}"
+    done <"${lSEMGREPLOG_CSV}"
+
+    # Finally we check for function calls and include links to the file of the function
+    if [[ "${INTERNAL_LINKING:-0}" -eq 1 ]]; then
+      local lFCT_CALLS_ARR=()
+      # we remove the first 4 lines to ensure we do not link the function byitself
+      mapfile -t lFCT_CALLS_ARR < <(tail -n +4 "${lC_SRC_FCT}" | grep -oE "FUN_[[:alnum:]_]+" | sort -u || true)
+      for lFCT_CALL in "${lFCT_CALLS_ARR[@]}"; do
+        [[ -z "${lFCT_CALL}" ]] && continue
+        print_debug "[*] Checking ${lFCT_CALL} in ${lC_SRC_FCT}" "no_log"
+        local lFCT_CALL_TARGET=""
+        lFCT_CALL_TARGET=$(find "${LOG_PATH_MODULE}/haruspex_${lNAME}/" -name "*${lFCT_CALL}*" -print -quit)
+        if [[ -n "${lFCT_CALL_TARGET}" ]]; then
+          # check if we have already linked the function
+          # if no link is avaialable, we include it now
+          if ! grep -q "[REF] ${lFCT_CALL_TARGET}" "${lC_SRC_FCT}"; then
+            print_debug "[*] Adding link for function ${lFCT_CALL} into ${lC_SRC_FCT}" "no_log"
+            sed -i "/${lFCT_CALL}/a \[REF\] ${lFCT_CALL_TARGET}" "${lC_SRC_FCT}" || true
+          fi
+        fi
+      done
+    fi
+  fi
+
+  # GPT integration
+  lGPT_ANCHOR="$(openssl rand -hex 8)"
+  # if we have some semgrep results for this function we increase our priority
+  if grep -q "possible issue identified - semgrep" "${lC_SRC_FCT}"; then
+    local lSEMGREP_CNT=0
+    lSEMGREP_CNT=$(grep -c "possible issue identified - semgrep" "${lC_SRC_FCT}" || echo 0)
+    lGPT_PRIO=$((lGPT_PRIO + lSEMGREP_CNT))
+  fi
+  # if it is not a default (known) linux file we increase the priority
+  if ! grep -F -x -q -- "${lNAME}" "${BASE_LINUX_FILES}" 2>/dev/null; then
+    lGPT_PRIO=$((lGPT_PRIO + 1))
+  fi
+  write_csv_AI_tmp "${LOG_PATH_MODULE}/haruspex_${lNAME}/${lHARUSPEX_FILE_NAME}" "${lGPT_ANCHOR}" "${lGPT_PRIO}" "${GPT_QUESTION}" "${LOG_PATH_MODULE}/haruspex_${lNAME}/${lHARUSPEX_FILE_NAME}" "" ""
+  write_anchor_AI "${lGPT_ANCHOR}" "${LOG_PATH_MODULE}"/haruspex_"${lNAME}"/"${lHARUSPEX_FILE_NAME}"
+
+  if [[ -f "${lSEMGREPLOG_TMP}" ]]; then
+    cat "${lSEMGREPLOG_TMP}" >>"${lSEMGREPLOG_TXT}"
+  fi
+}
