@@ -30,3 +30,31 @@ MODE_COMPROMISED  = "compromised"
 
 DEVICE_ID = "CG-CHARGER-001"
 VENDOR    = "ChargeCo"
+CHARGER_MODEL = "ChargeCo AC-7 Pro"
+
+# ── Live gateway (OCPP 1.6-J) ───────────────────────────────────────────────
+# The ChargeGuard node terminates the charger's OCPP connection, so it sits
+# inline and sees every message. In production it forwards to the upstream CSMS.
+OCPP_HOST = "127.0.0.1"
+OCPP_PORT = 9000
+OCPP_PATH = "/ocpp"
+HEARTBEAT_INTERVAL_S = 5
+ATTESTATION_VENDOR_ID = "org.chargeguard"      # OCPP DataTransfer vendorId
+
+# Flow collector: receives IPFIX-style flow records exported by the site
+# switch / bridge (simulated by simlab.tap in software mode).
+FLOW_SENSOR_HOST = "127.0.0.1"
+FLOW_SENSOR_PORT = 9100
+
+# Logical site addressing used by the tap simulator and the baseline
+SITE = {
+    "charger_ip": "10.20.0.15",
+    "node_ip":    "10.20.0.1",     # ChargeGuard node: OCPP endpoint, NTP, DNS resolver
+}
+
+# Presentation pacing: the real checks take milliseconds. The dashboard holds
+# each step until its schedule window ends so the audience can follow it.
+# Measured compute time is always reported separately in the evidence.
+PRESENTATION_PACING = True
+
+AUDIT_FEED_PATH = BASE_DIR / "audit" / "cve_feed.json"
