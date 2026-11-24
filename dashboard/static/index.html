@@ -1196,3 +1196,139 @@ const scanPlane = new THREE.Mesh(new THREE.PlaneGeometry(5,.04), scanMat);
 scanPlane.position.set(-2.3, 0, 0);
 scene.add(scanPlane);
 
+// ── Scene controller (exposed to main UI script) ──────────────────────────
+const clock = new THREE.Clock();
+clock.getDelta_safe = function(){
+  const d = this.getDelta(); return Math.min(d, 0.05);
+};
+let _ptSpeed = .12;
+let _scanActive = false, _scanDir = 1, _scanY = 0;
+let _shakeNode = null, _shakeT = 0;
+
+window.sceneCtrl = {
+  setParticleColor(hex){ ptMat.color.setHex(hex); },
+  setParticleSpeed(s){ _ptSpeed = s; },
+
+  activateNode(name) {
+    const n = nodeObjects[name]; if(!n) return;
+    n.userData.state = 'active';
+    n.userData.coreMat.emissive = new THREE.Color(n.userData.color);
+    n.userData.coreMat.emissiveIntensity = .6;
+    n.userData.ringMat.opacity = .7;
+    n.userData.lineMat.opacity = .6;
+    this.setParticleSpeed(.28);
+  },
+
+  resolveNode(name, status) {
+    const n = nodeObjects[name]; if(!n) return;
+    n.userData.state = status;
+    const colorMap = { pass:0x16a34a, fail:0xdc2626, warning:0xd97706 };
+    const c = colorMap[status] || n.userData.color;
+    n.userData.coreMat.color.setHex(c);
+    n.userData.coreMat.emissive = new THREE.Color(c);
+    n.userData.coreMat.emissiveIntensity = status === 'pass' ? .3 : .7;
+    n.userData.ringMat.color.setHex(c);
+    n.userData.wireMat.color.setHex(c);
+    n.userData.lineMat.color.setHex(c);
+    n.userData.lineMat.opacity = .4;
+    if(status === 'fail') { _shakeNode = n; _shakeT = 0; }
+    const ptColors = { pass:0x22c55e, fail:0xef4444, warning:0xf59e0b };
+    if(ptColors[status]) this.setParticleColor(ptColors[status]);
+  },
+
+  triggerScan() {
+    _scanActive = true; _scanDir = 1; _scanY = 0;
+    scanMat.opacity = .55;
+  },
+
+  setVerdict(v) {
+    const bgColors = { green:0xd1fae5, amber:0xfef9c3, red:0xffe4e6 };
+    const fogColors = { green:0xd1fae5, amber:0xfef9c3, red:0xffe4e6 };
+    if(bgColors[v]) {
+      renderer.setClearColor(bgColors[v]);
+      scene.fog.color.setHex(fogColors[v]);
+    }
+    const lightColors = { green:0x22c55e, amber:0xf59e0b, red:0xef4444 };
+    if(lightColors[v]) window._stationLight.color.setHex(lightColors[v]);
+  },
+
+  reset() {
+    renderer.setClearColor(0xdbeafe);
+    scene.fog.color.setHex(0xdbeafe);
+    window._stationLight.color.setHex(0x3b82f6);
+    ptMat.color.setHex(0x3b82f6);
+    _ptSpeed = .12;
+    _scanActive = false; scanMat.opacity = 0;
+    NODE_DEFS.forEach(def => {
+      const n = nodeObjects[def.name];
+      n.userData.coreMat.color.setHex(def.color);
+      n.userData.coreMat.emissive = new THREE.Color(0x000000);
+      n.userData.coreMat.emissiveIntensity = 0;
+      n.userData.ringMat.color.setHex(def.color);
+      n.userData.wireMat.color.setHex(def.color);
+      n.userData.ringMat.opacity = .35;
+      n.userData.lineMat.opacity = .2;
+      n.userData.state = 'idle';
+    });
+  }
+};
+
+// ── Animation loop ────────────────────────────────────────────────────────
+let frameCount = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  const d = clock.getDelta_safe();
+  frameCount++;
+
+  controls.update();
+
+  // Bob nodes
+  NODE_DEFS.forEach(def => {
+    const n = nodeObjects[def.name];
+    n.position.y = def.pos[1] + Math.sin(t * 1.1 + def.pos[0]) * .07;
+    n.children[0].rotation.y = t * .6 + def.pos[0];
+    n.children[1].rotation.x = t * .4 + def.pos[2];
+    n.userData.ring.rotation.z = t * .5;
+  });
+
+  // Particle flow
+  for(let i=0;i<PARTICLE_COUNT;i++){
+    ptOffsets[i] = (ptOffsets[i] + _ptSpeed * .016) % 1;
+    const pt = cableCurve.getPoint(ptOffsets[i]);
+    ptPositions[i*3]=pt.x; ptPositions[i*3+1]=pt.y; ptPositions[i*3+2]=pt.z;
+  }
+  ptGeo.attributes.position.needsUpdate = true;
+
+  // Scan plane
+  if(_scanActive) {
+    _scanY += _scanDir * .025;
+    scanPlane.position.y = _scanY;
+    if(_scanY > 1.6) { _scanDir = -1; }
+    if(_scanY < 0) { _scanActive = false; scanMat.opacity = 0; _scanY = 0; }
+  }
+
+  // Shake node
+  if(_shakeNode) {
+    _shakeT += .1;
+    _shakeNode.position.x += Math.sin(_shakeT * 20) * .015;
+    if(_shakeT > 1) { _shakeNode = null; }
+  }
+
+  // Screen pulse
+  const scr = station.userData.screen;
+  if(scr) scr.material.emissiveIntensity = .4 + Math.sin(t * 2.5) * .15;
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Resize ────────────────────────────────────────────────────────────────
+const ro = new ResizeObserver(() => {
+  renderer.setSize(W(), H(), false);
+  camera.aspect = W()/H();
+  camera.updateProjectionMatrix();
+});
+ro.observe(canvas);
+</script>
+
