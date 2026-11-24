@@ -517,3 +517,429 @@ input[type=range]::-webkit-slider-thumb{
 </style>
 </head>
 <body>
+<div id="app">
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div>
+      <div>Charge<span>Guard</span> <span style="font-size:.7rem;font-weight:500;color:var(--text3)">SOC</span></div>
+      <div class="tagline">EV Charging Security Operations Centre</div>
+    </div>
+  </div>
+  <div class="header-status">
+    <div class="status-pill standby" id="statusPill">
+      <div class="pulse-dot" id="pulseDot"></div>
+      <span id="statusText">STANDBY</span>
+    </div>
+    <div class="session-id" id="sessionDisplay">No active session</div>
+  </div>
+</header>
+
+<!-- ── MAIN ROW ── -->
+<div class="main-row">
+
+  <!-- LEFT: Status panel -->
+  <aside class="panel-left">
+
+    <div class="panel-section">
+      <div class="section-title">Trust Verdict</div>
+      <div class="verdict-wrap">
+        <div class="ring-svg-wrap">
+          <svg viewBox="0 0 120 120">
+            <circle class="ring-track" cx="60" cy="60" r="54"/>
+            <circle class="ring-fill" id="ringFill" cx="60" cy="60" r="54"/>
+          </svg>
+          <div class="ring-center">
+            <div class="ring-verdict-label" id="ringLabel">STANDBY</div>
+            <div class="ring-score" id="ringScore">—</div>
+          </div>
+        </div>
+        <div class="verdict-text" id="verdictText">
+          Configure an attack scenario and press Verify System to begin.
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">Security Checks</div>
+      <div class="check-list" id="checkList">
+        <div class="check-row" id="cr-identity">
+          <div class="check-dot" id="cd-identity">🔑</div>
+          <div class="check-row-body">
+            <div class="check-row-name">Identity & Attestation</div>
+            <div class="check-row-detail" id="cdet-identity">TPM challenge-response</div>
+            <div class="check-row-time" id="ctim-identity"></div>
+          </div>
+        </div>
+        <div class="check-row" id="cr-integrity">
+          <div class="check-dot" id="cd-integrity">🔏</div>
+          <div class="check-row-body">
+            <div class="check-row-name">Firmware Integrity</div>
+            <div class="check-row-detail" id="cdet-integrity">Hash + vendor signature</div>
+            <div class="check-row-time" id="ctim-integrity"></div>
+          </div>
+        </div>
+        <div class="check-row" id="cr-weaknesses">
+          <div class="check-dot" id="cd-weaknesses">🔍</div>
+          <div class="check-row-body">
+            <div class="check-row-name">CVE / Weaknesses</div>
+            <div class="check-row-detail" id="cdet-weaknesses">Pre-audit DB lookup</div>
+            <div class="check-row-time" id="ctim-weaknesses"></div>
+          </div>
+        </div>
+        <div class="check-row" id="cr-behavior">
+          <div class="check-dot" id="cd-behavior">📡</div>
+          <div class="check-row-body">
+            <div class="check-row-name">Live Behavior</div>
+            <div class="check-row-detail" id="cdet-behavior">Traffic baseline check</div>
+            <div class="check-row-time" id="ctim-behavior"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section" style="flex:1">
+      <div class="section-title">Alert Feed</div>
+      <div class="alert-list" id="alertList">
+        <div class="alert-item info">
+          <span class="alert-time">--:--</span>
+          <span>System ready. No active session.</span>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- CENTER: 3D Scene -->
+  <main class="scene-container">
+    <canvas id="three-canvas"></canvas>
+    <div class="scene-hud">
+      <div class="hud-top">
+        <div class="hud-badge">
+          Device<div class="hud-val" id="hudDevice">CG-CHARGER-001</div>
+        </div>
+        <div class="hud-timer" id="hudTimerWrap" style="opacity:0;transition:opacity .3s">
+          <div class="hud-timer-label">Verification Time</div>
+          <div class="hud-timer-val" id="hudTimer">0.0s</div>
+          <div class="timer-bar"><div class="timer-bar-fill" id="timerBarFill"></div></div>
+        </div>
+        <div class="hud-badge">
+          Firmware<div class="hud-val" id="hudFirmware">v2.1.0</div>
+        </div>
+      </div>
+      <div class="hud-bottom" id="hudNodes">
+        <div class="node-label"><div class="dot" style="background:#7c3aed"></div>Identity</div>
+        <div class="node-label"><div class="dot" style="background:#0284c7"></div>Integrity</div>
+        <div class="node-label"><div class="dot" style="background:#d97706"></div>CVE Scan</div>
+        <div class="node-label"><div class="dot" style="background:#16a34a"></div>Behavior</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- RIGHT: Attack control panel -->
+  <aside class="panel-right">
+    <div class="ctrl-header">Attack Configuration</div>
+    <div class="ctrl-scroll">
+
+      <!-- Presets -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-blue">
+          <div class="cs-icon">📋</div>Quick Presets
+        </div>
+        <div class="preset-grid">
+          <button class="preset-btn healthy selected" data-preset="healthy" onclick="applyPreset(this)">
+            <span class="pb-act">Act 1</span>
+            <span class="pb-name">Healthy</span>
+          </button>
+          <button class="preset-btn tampered" data-preset="tampered" onclick="applyPreset(this)">
+            <span class="pb-act">Act 2</span>
+            <span class="pb-name">Tampered</span>
+          </button>
+          <button class="preset-btn vulnerable" data-preset="vulnerable" onclick="applyPreset(this)">
+            <span class="pb-act">Act 3</span>
+            <span class="pb-name">Vulnerable</span>
+          </button>
+          <button class="preset-btn compromised" data-preset="compromised" onclick="applyPreset(this)">
+            <span class="pb-act">Act 4</span>
+            <span class="pb-name">Compromised</span>
+          </button>
+          <button class="preset-btn custom" data-preset="custom" onclick="applyPreset(this)" style="grid-column:span 2">
+            <span class="pb-act">Custom</span>
+            <span class="pb-name">Build Your Own Attack Combo</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Identity -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-purple">
+          <div class="cs-icon">🔑</div>Identity Attack
+        </div>
+        <div class="radio-group" id="rg-identity">
+          <label class="radio-label checked" onclick="selectRadio('rg-identity',this,'legitimate')">
+            <input type="radio" name="identity" value="legitimate" checked>
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Legitimate Device</div>
+              <div class="radio-desc">Enrolled Ed25519 key — identity passes</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-identity',this,'unknown')">
+            <input type="radio" name="identity" value="unknown">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Unknown / Rogue Charger</div>
+              <div class="radio-desc">Device ID not in registry — simulates rogue charger</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-identity',this,'clone')">
+            <input type="radio" name="identity" value="clone">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Cloned Identity</div>
+              <div class="radio-desc">Valid ID, wrong key — TPM key mismatch attack</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Firmware -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-blue">
+          <div class="cs-icon">🔏</div>Firmware Mode
+        </div>
+        <div class="radio-group" id="rg-firmware">
+          <label class="radio-label checked" onclick="selectRadio('rg-firmware',this,'good')">
+            <input type="radio" name="firmware" value="good" checked>
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Authentic v2.1.0</div>
+              <div class="radio-desc">Signed, registered, unmodified</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-firmware',this,'tampered')">
+            <input type="radio" name="firmware" value="tampered">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Tampered Image</div>
+              <div class="radio-desc">Bit-flipped payload — hash/sig mismatch</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-firmware',this,'vulnerable')">
+            <input type="radio" name="firmware" value="vulnerable">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Legacy v1.8.3 (w/ CVEs)</div>
+              <div class="radio-desc">Authentic but outdated — CVEs present</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- CVE Injection -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-amber">
+          <div class="cs-icon">🔍</div>CVE Injection
+          <span style="font-size:.6rem;font-weight:400;color:var(--text3);margin-left:auto">
+            Overrides firmware CVEs
+          </span>
+        </div>
+        <div class="cve-list">
+          <label class="cve-label" id="cve-label-CVE-2022-0778" onclick="toggleCVE(this,'CVE-2022-0778')">
+            <input type="checkbox" value="CVE-2022-0778">
+            <div class="cve-check">✓</div>
+            <div class="cve-info">
+              <div class="cve-id">CVE-2022-0778 <span class="cve-sev sev-HIGH">HIGH 7.5</span></div>
+              <div class="cve-meta">OpenSSL — BN_mod_sqrt() infinite loop (DoS)</div>
+            </div>
+          </label>
+          <label class="cve-label" id="cve-label-CVE-2021-28831" onclick="toggleCVE(this,'CVE-2021-28831')">
+            <input type="checkbox" value="CVE-2021-28831">
+            <div class="cve-check">✓</div>
+            <div class="cve-info">
+              <div class="cve-id">CVE-2021-28831 <span class="cve-sev sev-HIGH">HIGH 7.5</span></div>
+              <div class="cve-meta">BusyBox — gunzip invalid free (RCE)</div>
+            </div>
+          </label>
+          <label class="cve-label" id="cve-label-CVE-2022-37434" onclick="toggleCVE(this,'CVE-2022-37434')">
+            <input type="checkbox" value="CVE-2022-37434">
+            <div class="cve-check">✓</div>
+            <div class="cve-info">
+              <div class="cve-id">CVE-2022-37434 <span class="cve-sev sev-CRITICAL">CRITICAL 9.8</span></div>
+              <div class="cve-meta">zlib — inflate() heap overflow (RCE)</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Behavior -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-green">
+          <div class="cs-icon">📡</div>Traffic / Behavior
+        </div>
+        <div class="radio-group" id="rg-behavior">
+          <label class="radio-label checked" onclick="selectRadio('rg-behavior',this,'normal')">
+            <input type="radio" name="behavior" value="normal" checked>
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Normal OCPP Heartbeat</div>
+              <div class="radio-desc">Expected baseline — no anomalies</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-behavior',this,'port_scan')">
+            <input type="radio" name="behavior" value="port_scan">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Port Scan</div>
+              <div class="radio-desc">Charger probes LAN for SSH/RDP/SMB — active recon</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-behavior',this,'c2')">
+            <input type="radio" name="behavior" value="c2">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">C2 Callback</div>
+              <div class="radio-desc">Beacons to attacker server on port 4444</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-behavior',this,'dns_exfil')">
+            <input type="radio" name="behavior" value="dns_exfil">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">DNS Exfiltration</div>
+              <div class="radio-desc">Encodes data in abnormal DNS query bursts</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-behavior',this,'burst')">
+            <input type="radio" name="behavior" value="burst">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Traffic Burst / Flood</div>
+              <div class="radio-desc">Message rate far exceeds OCPP baseline</div>
+            </div>
+          </label>
+        </div>
+
+        <div class="slider-wrap" id="behaviorSliders">
+          <div class="slider-row">
+            <span class="slider-label">Rate (msg/s)</span>
+            <span class="slider-val" id="rateVal">50</span>
+          </div>
+          <input type="range" min="1" max="200" value="50" id="rateSlider"
+            oninput="updateSlider(this,'rateVal',' msg/s')" style="--pct:25%">
+          <div class="slider-row" style="margin-top:.5rem">
+            <span class="slider-label">Target IP</span>
+          </div>
+          <input type="text" class="ctrl-input" id="targetInput"
+            value="192.168.1.254" placeholder="Target IP address">
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer: Verify button -->
+    <div class="ctrl-footer">
+      <button class="btn-verify" id="btnVerify" onclick="startVerification()">
+        ⚡ Verify System
+      </button>
+      <button class="btn-evidence" id="btnEvidence" onclick="openModal()">
+        📋 Open Evidence Report
+      </button>
+    </div>
+  </aside>
+
+</div><!-- end main-row -->
+
+<!-- ── BOTTOM PANEL ── -->
+<div class="bottom-panel">
+
+  <!-- Col 1: Check results -->
+  <div class="bottom-col">
+    <div class="bottom-col-title">
+      <div class="bc-icon" style="background:#eff6ff;color:var(--blue)">✓</div>
+      Check Results
+    </div>
+    <div class="result-cards" id="resultCards">
+      <div class="result-card" id="rc-identity"><span class="rc-icon">🔑</span><span class="rc-name">Identity</span><span class="rc-status">PENDING</span></div>
+      <div class="result-card" id="rc-integrity"><span class="rc-icon">🔏</span><span class="rc-name">Integrity</span><span class="rc-status">PENDING</span></div>
+      <div class="result-card" id="rc-weaknesses"><span class="rc-icon">🔍</span><span class="rc-name">CVE Scan</span><span class="rc-status">PENDING</span></div>
+      <div class="result-card" id="rc-behavior"><span class="rc-icon">📡</span><span class="rc-name">Behavior</span><span class="rc-status">PENDING</span></div>
+    </div>
+  </div>
+
+  <!-- Col 2: Traffic monitor -->
+  <div class="bottom-col">
+    <div class="bottom-col-title">
+      <div class="bc-icon" style="background:#f0fdf4;color:var(--green)">📶</div>
+      Network Traffic
+    </div>
+    <div class="traffic-monitor" id="trafficMonitor">
+      <div class="traffic-row">
+        <span class="traffic-proto proto-normal">HEARTBEAT</span>
+        <span class="traffic-dst">localhost:8080</span>
+        <span class="traffic-rate">1 msg/s</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Col 3: Evidence -->
+  <div class="bottom-col">
+    <div class="bottom-col-title">
+      <div class="bc-icon" style="background:#ede9fe;color:var(--purple)">📄</div>
+      Evidence Summary
+    </div>
+    <div class="evidence-panel" id="evidencePanel">
+      <div class="verdict-banner vb-neutral">Awaiting verification run</div>
+      <div class="ev-row-b"><span class="ev-k">Session</span><span class="ev-v">—</span></div>
+      <div class="ev-row-b"><span class="ev-k">Verdict</span><span class="ev-v">—</span></div>
+      <div class="ev-row-b"><span class="ev-k">Score</span><span class="ev-v">—</span></div>
+      <div class="ev-row-b"><span class="ev-k">Signature</span><span class="ev-v">—</span></div>
+    </div>
+  </div>
+
+  <!-- Col 4: Compliance -->
+  <div class="bottom-col">
+    <div class="bottom-col-title">
+      <div class="bc-icon" style="background:#fef3c7;color:var(--amber)">📜</div>
+      Compliance Controls
+    </div>
+    <div class="compliance-list" id="complianceList">
+      <div class="comp-item">
+        <div class="comp-std">UNECE R155 · 7.3.3</div>
+        <div class="comp-title">Identity authentication of vehicle communication</div>
+      </div>
+      <div class="comp-item">
+        <div class="comp-std">ETSI EN 303 645 · 5.3-1</div>
+        <div class="comp-title">Software integrity via secure boot</div>
+      </div>
+      <div class="comp-item">
+        <div class="comp-std">ISA/IEC 62443-4-2 · CR 7.6</div>
+        <div class="comp-title">Known vulnerability tracking</div>
+      </div>
+      <div class="comp-item">
+        <div class="comp-std">NIST SP 800-193 · 4.2</div>
+        <div class="comp-title">Detection and response capabilities</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end bottom-panel -->
+
+</div><!-- end app -->
+
+<!-- Evidence modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Signed Evidence Report</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modalBody">Loading…</div>
+    <div class="modal-foot">
+      <a class="btn-dl" id="btnDownload" href="#" download>Download Signed SARIF Report (JSON)</a>
+    </div>
+  </div>
+</div>
+
