@@ -184,3 +184,21 @@ async def ws_verify(websocket: WebSocket, session_id: str):
     finally:
         await websocket.close()
 
+
+@app.get("/api/report/{session_id}")
+async def download_report(session_id: str):
+    path = EVIDENCE_DIR / f"{session_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Report not found.")
+    return FileResponse(
+        str(path),
+        media_type="application/json",
+        filename=f"chargeguard_report_{session_id[:8]}.json",
+    )
+
+
+@app.get("/api/session/{session_id}")
+async def get_session(session_id: str):
+    if session_id not in _sessions:
+        raise HTTPException(404, "Session not found.")
+    return _sessions[session_id]
