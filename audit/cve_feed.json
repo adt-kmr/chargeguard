@@ -1,0 +1,52 @@
+{
+  "feed": "chargeguard-curated",
+  "description": "Curated offline CVE feed for the demo firmware components. Real CVE identifiers, CVSS v3 base scores and affected version ranges from the NVD and upstream advisories. Production deployments replace this with the Grype vulnerability database (integrations/vulnerability).",
+  "updated": "2026-11-24",
+  "entries": [
+    {
+      "cve_id": "CVE-2022-0778",
+      "component": "openssl",
+      "severity": "HIGH",
+      "cvss": 7.5,
+      "description": "Infinite loop in BN_mod_sqrt() when parsing certificates with explicit elliptic-curve parameters allows denial of service.",
+      "affected": [["1.0.2", "1.0.2zd"], ["1.1.1", "1.1.1n"], ["3.0.0", "3.0.2"]],
+      "fixed_in": "1.1.1n / 3.0.2"
+    },
+    {
+      "cve_id": "CVE-2022-2068",
+      "component": "openssl",
+      "severity": "CRITICAL",
+      "cvss": 9.8,
+      "description": "c_rehash script does not sanitise shell metacharacters in certificate file names, allowing command injection.",
+      "affected": [["1.0.2", "1.0.2zf"], ["1.1.1", "1.1.1p"], ["3.0.0", "3.0.4"]],
+      "fixed_in": "1.1.1p / 3.0.4"
+    },
+    {
+      "cve_id": "CVE-2023-0286",
+      "component": "openssl",
+      "severity": "HIGH",
+      "cvss": 7.4,
+      "description": "Type confusion in X.400 address processing inside GENERAL_NAME allows memory disclosure or denial of service.",
+      "affected": [["1.0.2", "1.0.2zg"], ["1.1.1", "1.1.1t"], ["3.0.0", "3.0.8"]],
+      "fixed_in": "1.1.1t / 3.0.8"
+    },
+    {
+      "cve_id": "CVE-2022-37434",
+      "component": "zlib",
+      "severity": "CRITICAL",
+      "cvss": 9.8,
+      "description": "Heap-based buffer over-read or overflow in inflate() via a large gzip header extra field.",
+      "affected": [["0.0.0", "1.2.13"]],
+      "fixed_in": "1.2.13"
+    },
+    {
+      "cve_id": "CVE-2021-28831",
+      "component": "busybox",
+      "severity": "HIGH",
+      "cvss": 7.5,
+      "description": "decompress_gunzip.c mishandles the error bit on the huft_build result pointer, causing an invalid free with crafted gzip data.",
+      "affected": [["0.0.0", "1.33.1"]],
+      "fixed_in": "1.33.1"
+    }
+  ]
+}
