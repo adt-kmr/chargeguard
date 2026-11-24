@@ -1,0 +1,199 @@
+//
+// Copyright 2022 The Sigstore Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package verify
+
+import (
+	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/sigstore/cosign/v3/cmd/cosign/cli/options"
+	"github.com/sigstore/cosign/v3/internal/ui"
+	"github.com/sigstore/cosign/v3/pkg/cosign"
+	"github.com/sigstore/cosign/v3/pkg/oci/static"
+	"github.com/sigstore/cosign/v3/pkg/policy"
+	sgbundle "github.com/sigstore/sigstore-go/pkg/bundle"
+	sgverify "github.com/sigstore/sigstore-go/pkg/verify"
+)
+
+// VerifyBlobAttestationCommand verifies an attestation on a supplied blob
+// nolint
+type VerifyBlobAttestationCommand struct {
+	options.KeyOpts
+	options.CertVerifyOptions
+
+	TrustedRootPath string
+
+	CertGithubWorkflowTrigger    string
+	CertGithubWorkflowSHA        string
+	CertGithubWorkflowName       string
+	CertGithubWorkflowRepository string
+	CertGithubWorkflowRef        string
+
+	IgnoreSCT  bool
+	IgnoreTlog bool
+
+	CheckClaims   bool
+	PredicateType string
+	// TODO: Add policies
+
+	UseSignedTimestamps bool
+
+	Digest    string
+	DigestAlg string
+
+	AllowCertificateChain bool
+}
+
+// Exec runs the verification command
+func (c *VerifyBlobAttestationCommand) Exec(ctx context.Context, artifactPath string) (err error) {
+	// key and cert identity are mutually exclusive
+	if options.NOf(c.KeyRef, c.CertIdentity, c.CertIdentityRegexp) > 1 {
+		return &options.KeyAndIdentityParseError{}
+	}
+
+	// We can't have both a key and a security key
+	if options.NOf(c.KeyRef, c.Sk) > 1 {
+		return &options.KeyParseError{}
+	}
+
+	var identities []cosign.Identity
+	if c.KeyRef == "" && !c.Sk {
+		identities, err = c.Identities()
+		if err != nil {
+			return err
+		}
+	}
+
+	co := &cosign.CheckOpts{
+		Identities:                   identities,
+		CertGithubWorkflowTrigger:    c.CertGithubWorkflowTrigger,
+		CertGithubWorkflowSha:        c.CertGithubWorkflowSHA,
+		CertGithubWorkflowName:       c.CertGithubWorkflowName,
+		CertGithubWorkflowRepository: c.CertGithubWorkflowRepository,
+		CertGithubWorkflowRef:        c.CertGithubWorkflowRef,
+		IgnoreSCT:                    c.IgnoreSCT,
+		IgnoreTlog:                   c.IgnoreTlog,
+		UseSignedTimestamps:          c.UseSignedTimestamps,
+		AllowCertificateChain:        c.AllowCertificateChain,
+	}
+	vOfflineKey := verifyOfflineWithKey(c.KeyRef, c.Sk, co)
+
+	// User provides a key. Otherwise, verification requires a Fulcio certificate
+	// provided in an attached bundle.
+	var closeSV func()
+	co.SigVerifier, closeSV, err = LoadVerifierFromKey(ctx, c.KeyRef, c.Slot, c.Sk)
+	if err != nil {
+		return fmt.Errorf("loading verifier from key opts: %w", err)
+	}
+	defer closeSV()
+
+	var digestAlg string
+	var digest []byte
+	if c.CheckClaims {
+		if artifactPath != "" {
+			if c.Digest != "" {
+				ui.Warnf(ctx, "Ignoring provided --digest in favor of provided blob")
+			}
+			if c.DigestAlg != "" {
+				ui.Warnf(ctx, "Ignoring provided --digestAlg because a blob was provided")
+			}
+		} else if c.Digest != "" && c.DigestAlg != "" {
+			digest, err = hex.DecodeString(c.Digest)
+			if err != nil {
+				return fmt.Errorf("unable to decode provided digest: %w", err)
+			}
+			digestAlg = c.DigestAlg
+		}
+	}
+
+	err = SetTrustedMaterial(c.TrustedRootPath, vOfflineKey, co)
+	if err != nil {
+		return fmt.Errorf("setting trusted material: %w", err)
+	}
+	if co.TrustedMaterial == nil && !vOfflineKey {
+		return fmt.Errorf("a trusted root is required for verification; provide one via --trusted-root")
+	}
+
+	bundle, err := sgbundle.LoadJSONFromPath(c.BundlePath, co.BundleOptions()...)
+	if err != nil {
+		return err
+	}
+
+	var policyOpt sgverify.ArtifactPolicyOption
+	switch {
+	case !c.CheckClaims:
+		policyOpt = sgverify.WithoutArtifactUnsafe()
+	case artifactPath != "":
+		// Pass the artifact directly so sigstore-go can peek at the bundle
+		// and choose the correct hash algorithm automatically, rather than
+		// requiring the caller to supply --digestAlg up-front.
+		artifactFile, err := os.Open(filepath.Clean(artifactPath))
+		if err != nil {
+			return err
+		}
+		defer artifactFile.Close()
+		policyOpt = sgverify.WithArtifact(artifactFile)
+	default:
+		policyOpt = sgverify.WithArtifactDigest(digestAlg, digest)
+	}
+
+	_, err = cosign.VerifyNewBundle(ctx, co, policyOpt, bundle)
+	if err != nil {
+		return err
+	}
+
+	sigContent, err := bundle.SignatureContent()
+	if err != nil {
+		return fmt.Errorf("fetching signature content: %w", err)
+	}
+
+	envContent := sigContent.EnvelopeContent()
+	if envContent == nil {
+		return fmt.Errorf("bundle does not contain a DSSE envelope")
+	}
+
+	rawEnv := envContent.RawEnvelope()
+	if rawEnv == nil {
+		return fmt.Errorf("bundle does not contain a raw DSSE envelope")
+	}
+
+	payloadBytes, err := json.Marshal(rawEnv)
+	if err != nil {
+		return fmt.Errorf("marshaling envelope: %w", err)
+	}
+
+	att, err := static.NewAttestation(payloadBytes)
+	if err != nil {
+		return fmt.Errorf("creating attestation from envelope: %w", err)
+	}
+
+	// This checks the predicate type -- if no error is returned and no payload is, then
+	// the attestation is not of the given predicate type.
+	b, gotPredicateType, err := policy.AttestationToPayloadJSON(ctx, c.PredicateType, att)
+	if err != nil {
+		return fmt.Errorf("converting to consumable policy validation: %w", err)
+	}
+	if b == nil {
+		return fmt.Errorf("invalid predicate type, expected %s got %s", c.PredicateType, gotPredicateType)
+	}
+
+	ui.Infof(ctx, "Verified OK")
+	return nil
+}
