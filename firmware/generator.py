@@ -170,3 +170,22 @@ def generate_all() -> tuple[list, list, list]:
 
     return firmware_rows, cve_rows, identity_rows
 
+
+def get_vendor_pub_hex() -> str:
+    key = _load_or_create(KEYS_DIR / "vendor_private.pem")
+    return key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
+
+
+def get_device_key() -> Ed25519PrivateKey:
+    return _load_or_create(KEYS_DIR / f"{DEVICE_ID}_private.pem")
+
+
+def get_hash_for_mode(mode: str) -> str:
+    """Return the firmware hash the simulator reports for a given mode."""
+    if mode in ("healthy", "compromised"):
+        payload = _make_payload("good-2.1.0", tamper=False)
+    elif mode == "tampered":
+        payload = _make_payload("good-2.1.0", tamper=True)
+    else:  # vulnerable
+        payload = _make_payload("vuln-1.8.3", tamper=False)
+    return hashlib.sha256(payload).hexdigest()
