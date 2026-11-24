@@ -1,0 +1,88 @@
+# ChargeGuard Compliance Mapping
+# Maps each security check to the controls it provides evidence for.
+# Sources: UNECE R155/R156, ETSI EN 303 645, ISA/IEC 62443-4-2, NIST SP 800-193
+
+checks:
+  identity:
+    description: "Device identity and TPM-backed attestation"
+    controls:
+      - standard: "UNECE R155"
+        control_id: "7.3.3"
+        title: "Identification and authentication of vehicle communication"
+        requirement: "Vehicles shall implement mechanisms to identify and authenticate remote parties."
+      - standard: "ETSI EN 303 645"
+        control_id: "5.5-1"
+        title: "Software shall use best practice cryptography"
+        requirement: "Device authentication shall use a hardware root of trust where possible."
+      - standard: "ISA/IEC 62443-4-2"
+        control_id: "CR 1.1"
+        title: "Human user identification and authentication"
+        requirement: "The component shall provide the capability to identify and authenticate all human users."
+      - standard: "NIST SP 800-193"
+        control_id: "3.1"
+        title: "Platform Identity"
+        requirement: "The platform shall have a unique, immutable identity bound to a hardware root of trust."
+
+  integrity:
+    description: "Firmware integrity and secure update verification"
+    controls:
+      - standard: "UNECE R155"
+        control_id: "7.3.4"
+        title: "Software update and patch management"
+        requirement: "OEMs shall ensure software is protected against unauthorised manipulation."
+      - standard: "UNECE R156"
+        control_id: "7.2"
+        title: "Software update management system"
+        requirement: "Updates shall be authenticated by the OEM's signing infrastructure."
+      - standard: "ETSI EN 303 645"
+        control_id: "5.3-1"
+        title: "Software integrity"
+        requirement: "The IoT device shall verify the integrity of software using secure boot."
+      - standard: "ISA/IEC 62443-4-2"
+        control_id: "CR 3.4"
+        title: "Software and information integrity"
+        requirement: "The component shall provide the capability to perform integrity checks on software."
+      - standard: "NIST SP 800-193"
+        control_id: "3.2"
+        title: "Firmware Integrity"
+        requirement: "Firmware shall be protected against unauthorised modification using cryptographic mechanisms."
+
+  weaknesses:
+    description: "CVE and supply-chain vulnerability audit"
+    controls:
+      - standard: "UNECE R155"
+        control_id: "7.3.7"
+        title: "Vulnerability management"
+        requirement: "OEMs shall implement processes to monitor, detect, and respond to new vulnerabilities."
+      - standard: "ETSI EN 303 645"
+        control_id: "5.9-1"
+        title: "Software shall be kept updated"
+        requirement: "The software components in the device shall be updateable."
+      - standard: "ISA/IEC 62443-4-2"
+        control_id: "CR 7.6"
+        title: "Network and security configuration settings"
+        requirement: "Known vulnerabilities shall be tracked and remediated within defined timelines."
+      - standard: "NIST SP 800-193"
+        control_id: "4.1.2"
+        title: "SBOM and component inventory"
+        requirement: "Platform firmware shall maintain an inventory of software components and known vulnerabilities."
+
+  behavior:
+    description: "Live network behavior and anomaly detection"
+    controls:
+      - standard: "UNECE R155"
+        control_id: "7.3.5"
+        title: "Detection and monitoring"
+        requirement: "Vehicles shall implement mechanisms to detect and record cyber-attacks."
+      - standard: "ETSI EN 303 645"
+        control_id: "5.8-1"
+        title: "Personal data shall be secure"
+        requirement: "Devices shall minimise outbound network communications to those necessary for function."
+      - standard: "ISA/IEC 62443-4-2"
+        control_id: "CR 2.8"
+        title: "Auditable events"
+        requirement: "The component shall generate audit records for security-relevant events."
+      - standard: "NIST SP 800-193"
+        control_id: "4.2"
+        title: "Detection and Response"
+        requirement: "The platform shall be capable of detecting and reporting unauthorised modifications."
