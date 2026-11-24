@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iotaudit report</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#1d1d1f}
+h1{margin-bottom:.2rem}.muted{color:#666;font-size:.9rem}
+.card{border:1px solid #ddd;border-radius:10px;padding:1rem 1.2rem;margin:1.2rem 0}
+.summary{background:#f6f8fa;border-radius:8px;padding:.8rem 1rem;margin:.8rem 0}
+.verdict{margin:.15rem 4.8rem .45rem 0;padding:.55rem .8rem;background:#f3f6f4;border-radius:8px;
+line-height:1.45;font-size:1.02rem}
+.grade{float:right;font-size:2.6rem;font-weight:700;width:3.6rem;height:3.6rem;line-height:3.6rem;
+text-align:center;border-radius:10px;color:#fff}
+.gA{background:#1a7f37}.gB{background:#4c9a2a}.gC{background:#c69026}.gD{background:#d4691c}
+.gE{background:#c2410c}.gF{background:#b91c1c}
+table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{border-bottom:1px solid #eee;
+padding:.35rem;text-align:left;vertical-align:top}
+.critical{color:#b91c1c;font-weight:700}.high{color:#b91c1c;font-weight:600}.medium{color:#c2410c}.low{color:#666}
+.tag{display:inline-block;padding:0 .4rem;border-radius:4px;font-size:.8rem;background:#eee}
+.fact{display:inline-block;padding:0 .4rem;border-radius:4px;font-size:.8rem;background:#e7f3ea;color:#1a7f37}
+.indicator{display:inline-block;padding:0 .4rem;border-radius:4px;font-size:.8rem;background:#fff4e5;color:#9a6700}
+.chart{display:flex;align-items:flex-end;gap:2px;height:80px;margin:0.6rem 0}
+.chart .bar{flex:1;background:#4c9a2a;min-width:2px;border-radius:2px 2px 0 0}
+.chart .bar.active{background:#c2410c}
+.chart .bar.idle{background:#a8c5a0}
+@page { size: A4; margin: 14mm 12mm; }
+@media print {
+  body { max-width: none; margin: 0; padding: 0; }
+  .card { border: none; padding: 0; margin: 0; border-radius: 0; }
+  .device-next { page-break-before: always; break-before: page; }
+  .device-head { page-break-inside: avoid; break-inside: avoid; }
+  .grade { float: none; display: inline-block; vertical-align: top;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .chart { display: none; }
+  table { width: 100%; font-size: 8.5pt; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; break-inside: avoid; }
+  td, th { overflow-wrap: anywhere; word-wrap: break-word; }
+}
+</style></head><body>
+<h1>iotaudit report</h1>
+<p class="muted">Generated {{ generated }} &middot; iotaudit {{ version }}{% if meta.source %} &middot; source: {{ meta.source }}{% endif %}{% if meta.duration %} &middot; capture {{ meta.duration }}s{% endif %}{% if meta.upnp %} &middot; UPnP: {{ meta.upnp }}{% endif %}</p>
+<p class="muted">Findings are indicators based on observed traffic, not proof of wrongdoing by any vendor.
+All data was processed locally. IP Geolocation by DB-IP (https://db-ip.com).</p>
+{% for d in devices %}
+<div class="card device{% if not loop.first %} device-next{% endif %}">
+  <div class="device-head">
+    <div class="grade g{{ d.grade }}">{{ d.grade }}</div>
+    <h2>{{ d.ip }}</h2>
+    {% if d.verdict %}<p class="verdict"><b>Verdict.</b> {{ d.verdict }}</p>{% endif %}
+  </div>
+  <p class="muted">MAC {{ d.mac or "?" }} &middot; {{ d.vendor or "unknown vendor" }}
+  {% if d.hostname %}&middot; {{ d.hostname }}{% endif %}
+  {% if d.profile %}&middot; profile: {{ d.profile }}{% endif %} &middot; score {{ d.score }}/100</p>
+  {% if d.looks_like %}<p class="muted">Identified as {{ d.looks_like }}.</p>{% endif %}
+  {% if d.device_type and d.device_type.type %}<p class="muted"><b>Looks like a {{ d.device_type.label }}</b>
+  <span class="tag">type confidence: {{ d.device_type.confidence }}</span>{% if d.device_type.evidence %}
+  <br><span class="muted">why: {{ d.device_type.evidence[:4]|join("; ") }}</span>{% endif %}</p>{% endif %}
+  {% if d.summary %}<div class="summary"><b>Summary.</b> {{ d.summary }}</div>{% endif %}
+  {% if d.destination_countries or d.traffic_patterns or d.destinations %}
+  <div class="summary">
+    {% if d.destination_countries %}
+    <p><b>Destination countries</b> <span class="fact">observed</span></p>
+    <p class="muted">Countries of servers this device contacted, from a local lookup of the IP. This is an observed fact.</p>
+    <ul>
+      {% for c in d.destination_countries %}
+      <li><b>{{ c.country }}</b>: {{ c.destinations }} destination(s),
+          {{ c.bytes_out }} bytes out / {{ c.bytes_in }} bytes in{% if c.orgs %},
+          {{ c.orgs|join(", ") }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% elif d.destinations %}
+    <p><b>Destination countries</b> <span class="fact">observed</span></p>
+    <p class="muted">No country was on file for the internet destinations seen on this run.</p>
+    {% endif %}
+    {% if d.destinations_without_country %}
+    <p class="muted">{{ d.destinations_without_country }} internet destination(s) had no country on file.</p>
+    {% endif %}
+    {% if d.traffic_patterns %}
+    <p><b>Traffic patterns</b> <span class="indicator">indicator</span></p>
+    <p class="muted">Video, audio, telemetry, unknown, and peer-to-peer session setup are pattern matches. A match is not proof of what was sent.</p>
+    <ul>
+      {% for p in d.traffic_patterns %}
+      <li><span class="tag">confidence: {{ p.confidence }}</span> {{ p.summary }}</li>
+      {% endfor %}
+    </ul>
+    {% elif d.destinations %}
+    <p><b>Traffic patterns</b> <span class="indicator">indicator</span></p>
+    <p class="muted">Not enough timing data to classify video, audio, or telemetry. No pattern indicator is shown.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if d.idle_upload %}<p><b>Uploads while app idle:</b> {{ d.idle_upload }}</p>{% endif %}
+  {% if d.ipv6 and d.ipv6.any_ipv6_seen %}<p class="muted"><b>IPv6:</b> {{ d.ipv6.flows }} flow(s),
+  {{ d.ipv6.bytes }} bytes ({{ d.ipv6.link_local_bytes }} on link-local fe80::); NDP messages:
+  {% set n = d.ipv6.ndp %}{{ (n.ns or 0) + (n.na or 0) + (n.rs or 0) + (n.ra or 0) + (n.redirect or 0) }}
+  (NS {{ n.ns or 0 }}, NA {{ n.na or 0 }}), neighbours {{ d.ipv6.neighbors }}.</p>
+  {% elif d.ipv6 is defined and "any_ipv6_seen" in d.ipv6 %}<p class="muted"><b>IPv6:</b> none observed.</p>{% endif %}
+  {% if d.series_total %}
+  <h3>Traffic over time (10s buckets)</h3>
+  {% set ns = namespace(mx=1) %}
+  {% for k,v in d.series_total.items() %}{% if v > ns.mx %}{% set ns.mx = v %}{% endif %}{% endfor %}
+  <div class="chart" title="bytes per 10s">
+    {% for k,v in d.series_total.items() %}
+      {% set h = (v / ns.mx * 80)|int %}
+      <div class="bar" style="height:{{ h if h > 2 else 2 }}px" title="{{ k }}: {{ v }} bytes"></div>
+    {% endfor %}
+  </div>
+  {% if d.bursts %}
+  <p class="muted">Bursts:
+    {% for b in d.bursts %}
+      <span class="tag">{{ b.kind }} {{ b.bytes }}B</span>
+    {% endfor %}
+  </p>
+  {% endif %}
+  {% endif %}
+  <h3>Findings</h3>
+  {% if d.findings %}<ul>{% for f in d.findings %}
+    <li><span class="{{ f.severity }}">[{{ f.severity }}]</span> <b>{{ f.title }}</b>: {{ f.detail }}{% if f.confidence and f.confidence != "certain" %} <span class="tag">confidence: {{ f.confidence }}</span>{% endif %}</li>
+  {% endfor %}</ul>{% else %}<p>No issues observed.</p>{% endif %}
+  {% if d.known_issue_hints %}
+  <h3>Known issue hints</h3>
+  <p class="muted">Offline catalog matches from banners already observed. Each line is a possibility, not a confirmed firmware flaw. A hint changes the grade only when the version match is exact and the severity is critical (25 points, the same as one high finding).</p>
+  <ul>{% for h in d.known_issue_hints %}
+    <li><span class="{{ h.severity }}">[{{ h.severity }}]</span> <b>{{ h.cve }}</b> {{ h.title }}. {{ h.detail }}
+      <span class="muted">{{ h.observed }}</span>
+      <a href="{{ h.reference }}">{{ h.reference }}</a>
+      {% if h.affects_grade %}<span class="tag">counts toward the grade</span>{% else %}<span class="tag">does not change the grade</span>{% endif %}
+    </li>
+  {% endfor %}</ul>
+  {% elif d.known_issue_hints is defined and d.open_ports %}
+  <p class="muted">No curated known-issue hint matched the banners observed.</p>
+  {% endif %}
+  <h3>Internet destinations</h3>
+  <table repeat="1"><thead><tr><th>Domain(s)</th><th>IP</th><th>Country</th><th>Organisation</th><th>Ports / proto</th><th>Bytes</th><th>Encryption</th><th>Class</th></tr></thead><tbody>
+  {% for x in d.destinations %}<tr>
+    <td>{{ x.domains|join(", ") or "none" }}{% if x.tracker %} <span class="tag">tracker</span>{% endif %}</td>
+    <td>{{ x.ip }}</td><td>{{ x.country or "?" }}</td><td>{{ x.org or "?" }}</td>
+    <td>{{ x.ports|join(", ") }}{% if x.protocols %} ({{ x.protocols|join(", ") }}){% endif %}</td>
+    <td>{{ x.bytes_out }} out / {{ x.bytes_in or 0 }} in</td>
+    <td>{% if x.encryption_kind == "plaintext" %}<span class="high">plaintext</span>
+        {% elif x.encryption_kind == "custom-encryption" %}<span class="medium">custom (unverified)</span>
+        {% elif x.encryption_kind == "stun" %}STUN/TURN
+        {% elif x.encrypted %}TLS/encrypted{% else %}?{% endif %}
+        {% if x.readable_fraction is not none and x.encryption_kind == "plaintext" %}
+          <span class="muted">({{ (x.readable_fraction*100)|int }}% readable)</span>
+        {% endif %}
+    </td>
+    <td>{% if x.traffic_class %}looks like {{ x.traffic_class.display or x.traffic_class.label }}
+        <span class="tag">confidence: {{ x.traffic_class.confidence }}</span>
+        {% if x.traffic_class.detail %}<br><span class="muted">{{ x.traffic_class.detail }}</span>{% endif %}
+        {% else %}none{% endif %}</td>
+  </tr>{% endfor %}
+  </tbody></table>
+  {% if d.lan_peers %}
+  <h3>LAN peers (same Wi-Fi, often phone P2P video)</h3>
+  <table repeat="1"><thead><tr><th>IP</th><th>Ports</th><th>Bytes</th><th>Class</th></tr></thead><tbody>
+  {% for x in d.lan_peers %}<tr>
+    <td>{{ x.ip }}{% if x.special_use %} <span class="tag">special-use / not a real device</span>{% endif %}</td>
+    <td>{{ x.ports|join(", ") }}</td><td>{{ x.bytes_out }} out / {{ x.bytes_in or 0 }} in</td>
+    <td>{% if x.special_use %}<span class="muted">bogon/placeholder</span>{% elif x.traffic_class %}looks like {{ x.traffic_class.display or x.traffic_class.label }} <span class="tag">confidence: {{ x.traffic_class.confidence }}</span>{% else %}none{% endif %}</td>
+  </tr>{% endfor %}
+  </tbody></table>
+  {% endif %}
+  {% if d.open_ports %}<h3>Open ports (LAN)</h3>
+  <table repeat="1"><thead><tr><th>Port</th><th>Service</th><th>Product</th><th>Risk</th></tr></thead><tbody>
+  {% for p in d.open_ports %}<tr><td>{{ p.port }}/{{ p.proto }}</td><td>{{ p.service }}</td><td>{{ p.product }}</td>
+  <td class="{{ p.risk }}">{{ p.risk or "" }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</div>
+{% else %}<p>No devices observed.</p>{% endfor %}
+</body></html>
