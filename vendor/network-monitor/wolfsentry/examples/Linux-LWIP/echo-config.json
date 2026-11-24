@@ -1,0 +1,112 @@
+{
+    "wolfsentry-config-version" : 1,
+    "config-update" : {
+	"max-connection-count" : 5,
+	"penalty-box-duration" : "1h"
+    },
+    "events" : [
+	{
+	    "label" : "static-route-parent",
+	    "priority" : 1,
+	    "config" : {
+		"max-connection-count" : 10,
+		"penalty-box-duration" : "1m"
+	    },
+	    "actions" : [ "handle-connect", "handle-connect2" ],
+	    "insert-actions" : [ "handle-insert" ],
+	    "match-actions" : [ "handle-match", "notify-on-match" ],
+	    "delete-actions" : [ "handle-delete" ]
+	},
+	{
+	    "label" : "call-in-from-echo"
+	}
+    ],
+    "default-policies" : {
+	"default-policy" : "reject",
+	"default-event" : "static-route-parent"
+    },
+    "routes" : [
+	{
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 2,
+	    "remote" : {
+		"address" : "127.0.0.0",
+		"prefix-bits" : 8
+	    },
+	    "local" : {
+		"address" : "127.0.0.0",
+		"prefix-bits" : 8
+	    }
+	},
+	{
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 10,
+	    "remote" : {
+		"address" : "::1"
+	    },
+	    "local" : {
+		"address" : "::1"
+	    }
+	},
+	{
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 2,
+            "protocol" : 6,
+	    "remote" : {
+		"address" : "172.20.20.20",
+		"prefix-bits" : 32,
+		"interface" : 0
+	    }
+	},
+        {
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 2,
+            "protocol" : 1,
+	    "remote" : {
+                "port" : 8,
+		"address" : "172.20.20.10",
+		"prefix-bits" : 32,
+		"interface" : 0
+	    }
+	},
+        {
+	    "parent-event" : "static-route-parent",
+	    "direction-in" : true,
+	    "direction-out" : true,
+	    "penalty-boxed" : false,
+	    "green-listed" : true,
+	    "dont-count-hits" : false,
+	    "dont-count-current-connections" : false,
+	    "family" : 118,
+	    "remote" : {
+		"address" : "de:c0:de:03:02:00",
+		"prefix-bits" : 40,
+		"interface" : 0
+	    }
+	}
+    ]
+}
