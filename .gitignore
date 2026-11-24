@@ -74,6 +74,8 @@ service-account*.json
 *.pt
 *.pth
 tokenizer.model
+# ...except the small threat-detector programs, which are part of the product
+!/threatintel/weights/*.pte
 
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
@@ -110,3 +112,7 @@ desktop.ini
 # keys, sample certificates and fixtures must stay tracked, and their own
 # nested .gitignore files handle build outputs.
 !/vendor/**
+
+# Downloaded datasets (fetched by scripts/fetch_datasets.py) and training artefacts
+/data/raw/
+/data/interim/
