@@ -34,6 +34,8 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 gateway = Gateway()
+QR_URLS = {"legitimate": "https://chargepoint.com/pay/CG-CHARGER-001",
+           "malicious": "https://chargepoint-pay.top/verify?station=CG-001"}
 runner = ScenarioRunner()
 
 
@@ -43,6 +45,7 @@ class VerifyRequest(BaseModel):
     firmware_mode: str = "good"                 # good | tampered | vulnerable
     behavior_attack: str = "normal"             # normal | port_scan | c2 | dns_exfil | burst
     attack_timing: str = "plugin"               # plugin | mid_session
+    payment_qr: str = "legitimate"              # legitimate | malicious (QR shown on the charger screen)
     behavior_target: str = "192.168.1.254"
     behavior_rate: int = 50
     session_seconds: float = 30.0
@@ -85,7 +88,8 @@ async def start_verify(req: VerifyRequest):
     else:
         sc = Scenario(name="custom", identity=req.identity_attack, firmware=req.firmware_mode,
                       behaviour=req.behavior_attack, attack_timing=req.attack_timing,
-                      target=req.behavior_target, rate=req.behavior_rate)
+                      target=req.behavior_target, rate=req.behavior_rate,
+                      payment_qr=QR_URLS.get(req.payment_qr, QR_URLS["legitimate"]))
     sc.session_seconds = req.session_seconds
     session_id = str(uuid.uuid4())
     session = gateway.open_session(session_id, sc.to_dict())
@@ -117,6 +121,32 @@ async def ws_session(websocket: WebSocket, session_id: str):
             await websocket.close()
         except RuntimeError:
             pass
+
+
+class MessageCheck(BaseModel):
+    text: str
+
+
+class UrlCheck(BaseModel):
+    url: str
+
+
+@app.post("/api/threat/message")
+async def check_message(req: MessageCheck):
+    """Scam-message and embedded-link check, with the advisor's explanation."""
+    from threatintel import analyse_message
+    result = await asyncio.to_thread(analyse_message, req.text[:2000])
+    result["advisory"] = (await asyncio.to_thread(gateway.advisor.explain_threat, result)).to_dict()
+    return result
+
+
+@app.post("/api/threat/url")
+async def check_url(req: UrlCheck):
+    """Phishing check for a link or a scanned QR-code payload."""
+    from threatintel import analyse_url
+    result = await asyncio.to_thread(analyse_url, req.url[:2000])
+    result["advisory"] = (await asyncio.to_thread(gateway.advisor.explain_threat, result)).to_dict()
+    return result
 
 
 @app.get("/api/report/{session_id}")

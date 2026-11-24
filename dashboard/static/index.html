@@ -352,6 +352,32 @@ input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent)}
 }
 .ctrl-input:focus{border-color:var(--accent)}
 
+/* Driver safety check */
+.ti-section{padding-top:.85rem;border-top:1px solid var(--border)}
+.ti-input{font-family:var(--sans);resize:vertical;min-height:58px;line-height:1.45}
+.ti-examples{display:flex;gap:.3rem;margin:.4rem 0}
+.ti-chip{font:inherit;font-size:.6rem;font-weight:600;padding:.2rem .5rem;border-radius:999px;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface);color:var(--text2)}
+.ti-chip:hover{border-color:var(--border2);background:var(--surface2)}
+.btn-check{display:flex;align-items:center;justify-content:center;gap:.45rem;width:100%;
+  padding:.5rem;border-radius:var(--radius);cursor:pointer;font:inherit;font-size:.68rem;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--text);background:var(--surface);color:var(--text)}
+.btn-check .ico{width:13px;height:13px}
+.btn-check:hover{background:var(--surface2)}
+.btn-check:disabled{opacity:.5;cursor:wait}
+.ti-result{margin-top:.5rem;font-size:.66rem;line-height:1.45;color:var(--text2)}
+.ti-card{border:1px solid var(--border);border-radius:var(--radius);padding:.55rem .65rem;background:var(--surface)}
+.ti-card.bad{border-color:#ecbcb6;background:var(--red-l)}
+.ti-card.good{border-color:#c4d8cb;background:var(--green-l)}
+.ti-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;letter-spacing:.08em;
+  font-size:.6rem;text-transform:uppercase}
+.ti-card.bad .ti-head{color:var(--red)} .ti-card.good .ti-head{color:var(--green)}
+.ti-score{font-family:var(--mono);letter-spacing:0}
+.ti-sum{color:var(--text);margin:.3rem 0 .25rem}
+.ti-meta{font-size:.58rem;color:var(--text3);margin-top:.3rem}
+.ti-tag{display:inline-block;font-size:.56rem;padding:.08rem .35rem;border-radius:3px;background:#fff;
+  border:1px solid var(--border);margin:.12rem .2rem 0 0;color:var(--text2)}
+
 /* Buttons */
 .ctrl-footer{padding:.85rem 1.05rem;border-top:1px solid var(--border);
   display:flex;flex-direction:column;gap:.5rem;background:var(--surface)}
@@ -768,6 +794,31 @@ input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent)}
         </div>
       </div>
 
+      <!-- Payment QR -->
+      <div class="ctrl-section">
+        <div class="ctrl-section-title cs-amber">
+          <div class="cs-icon" data-ico="scan"></div>Payment QR on Screen
+        </div>
+        <div class="radio-group" id="rg-qr">
+          <label class="radio-label checked" onclick="selectRadio('rg-qr',this,'legitimate')">
+            <input type="radio" name="qr" value="legitimate" checked>
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Operator Payment Page</div>
+              <div class="radio-desc">chargepoint.com/pay/CG-CHARGER-001</div>
+            </div>
+          </label>
+          <label class="radio-label attack-option" onclick="selectRadio('rg-qr',this,'malicious')">
+            <input type="radio" name="qr" value="malicious">
+            <div class="radio-mark"></div>
+            <div class="radio-body">
+              <div class="radio-name">Quishing QR</div>
+              <div class="radio-desc">Look-alike payment page on chargepoint-pay.top</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
       <!-- Behavior -->
       <div class="ctrl-section">
         <div class="ctrl-section-title cs-green">
@@ -829,6 +880,22 @@ input[type=range]{width:100%;cursor:pointer;accent-color:var(--accent)}
           <input type="text" class="ctrl-input" id="targetInput"
             value="192.168.1.254" placeholder="Target IP address">
         </div>
+      </div>
+
+      <!-- Driver safety check (on-device scam / phishing detectors) -->
+      <div class="ctrl-section ti-section">
+        <div class="ctrl-section-title cs-green">
+          <div class="cs-icon" data-ico="shield"></div>Driver Safety Check
+        </div>
+        <textarea class="ctrl-input ti-input" id="tiInput" rows="3"
+          placeholder="Paste an SMS, or a link / scanned QR payload"></textarea>
+        <div class="ti-examples">
+          <button class="ti-chip" onclick="tiExample(0)">Scam SMS</button>
+          <button class="ti-chip" onclick="tiExample(1)">Fake pay link</button>
+          <button class="ti-chip" onclick="tiExample(2)">Genuine link</button>
+        </div>
+        <button class="btn-check" id="tiBtn" onclick="tiCheck()"><span data-ico="scan"></span>Check on device</button>
+        <div class="ti-result" id="tiResult"></div>
       </div>
 
     </div>
@@ -1317,6 +1384,7 @@ const cfg = {
   inject_cves:     [],
   behavior_attack: 'normal',
   attack_timing:   'plugin',
+  payment_qr:      'legitimate',
   behavior_rate:   50,
   behavior_target: '192.168.1.254',
 };
@@ -1439,6 +1507,7 @@ function applyPreset(btn) {
   setRadio('rg-firmware', pre.firmware_mode);
   setRadio('rg-behavior', pre.behavior_attack);
   setRadio('rg-timing',   pre.attack_timing);
+  setRadio('rg-qr',       'legitimate');
   document.querySelectorAll('.cve-label.checked').forEach(l=>{
     l.classList.remove('checked');
   });
@@ -1459,6 +1528,7 @@ function setRadio(groupId, value) {
   if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
   if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
   if(groupId === 'rg-timing')    cfg.attack_timing    = value;
+  if(groupId === 'rg-qr')        cfg.payment_qr       = value;
 }
 
 function selectRadio(groupId, label, value) {
@@ -1472,6 +1542,7 @@ function selectRadio(groupId, label, value) {
   if(groupId === 'rg-firmware')  cfg.firmware_mode    = value;
   if(groupId === 'rg-behavior')  cfg.behavior_attack  = value;
   if(groupId === 'rg-timing')    cfg.attack_timing    = value;
+  if(groupId === 'rg-qr')        cfg.payment_qr       = value;
   updateHUDFirmware();
   // Auto-select custom preset
   cfg.preset = 'custom';
@@ -1526,6 +1597,7 @@ async function startVerification() {
     firmware_mode:    cfg.firmware_mode,
     behavior_attack:  cfg.behavior_attack,
     attack_timing:    cfg.attack_timing,
+    payment_qr:       cfg.payment_qr,
     behavior_target:  document.getElementById('targetInput').value || '192.168.1.254',
     behavior_rate:    cfg.behavior_rate,
   };
@@ -1598,6 +1670,9 @@ function handleEvent(ev) {
     (ev.steps || []).forEach(s => addAlert('crit', '↳ ' + s));
     if(ev.action === 'isolate') setStatusPill('done-red', 'ISOLATED');
     enforcementLiveMonitor(ev);
+  }
+  if(ev.event === 'payment_qr' && ev.verdict !== 'phishing') {
+    addAlert('info', `Payment QR on screen checked: ${ev.host} — looks legitimate`);
   }
   if(ev.event === 'disconnected') {
     addAlert('info', `Charger ${ev.device_id} disconnected`);
@@ -1971,6 +2046,45 @@ async function openModal() {
 
   document.getElementById('modalBody').innerHTML = html;
 }
+
+// ── Driver safety check ─────────────────────────────────────────────────────
+const TI_EXAMPLES = [
+  'URGENT: Your EV charging account is suspended. Verify payment now at chargepoint-billing.top/verify or lose your balance',
+  'https://chargepoint-pay.top/verify?station=CG-001',
+  'https://chargepoint.com/pay/CG-CHARGER-001',
+];
+function tiExample(i) { document.getElementById('tiInput').value = TI_EXAMPLES[i]; tiCheck(); }
+window.tiExample = tiExample;
+
+async function tiCheck() {
+  const text = document.getElementById('tiInput').value.trim();
+  const out = document.getElementById('tiResult');
+  if(!text) { out.textContent = 'Paste a message or a link first.'; return; }
+  const isUrl = !/\s/.test(text);
+  const btn = document.getElementById('tiBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(isUrl ? '/api/threat/url' : '/api/threat/message', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(isUrl ? {url:text} : {text})}).then(r=>r.json());
+    const bad = r.verdict !== 'legitimate';
+    const label = isUrl ? (bad ? 'Phishing link' : 'Link looks safe') : (bad ? 'Likely scam' : 'No scam detected');
+    const score = isUrl ? r.score : Math.max(r.message.score, r.worst_link ? r.worst_link.score : 0);
+    const tags = isUrl ? r.rules : [...r.message.signals.map(s=>s.feature),
+                                    ...(r.worst_link ? r.worst_link.rules : [])];
+    const ms = isUrl ? r.latency_ms : r.message.latency_ms + (r.worst_link ? r.worst_link.latency_ms : 0);
+    const a = r.advisory;
+    out.innerHTML = `<div class="ti-card ${bad?'bad':'good'}">
+      <div class="ti-head"><span>${label}</span><span class="ti-score">${(score*100).toFixed(0)}%</span></div>
+      <div class="ti-sum">${esc(a.summary)}</div>
+      ${(a.steps||[]).map((s,i)=>`<div>${i+1}. ${esc(s)}</div>`).join('')}
+      <div>${tags.slice(0,5).map(t=>`<span class="ti-tag">${esc(t)}</span>`).join('')}</div>
+      <div class="ti-meta">On-device · ${ms.toFixed(2)} ms · advisor: ${esc(a.engine)}</div>
+    </div>`;
+  } catch(e) {
+    out.textContent = 'Check failed: ' + e;
+  } finally { btn.disabled = false; }
+}
+window.tiCheck = tiCheck;
 
 async function checkSignature() {
   const r = await fetch(`/api/report/${sessionId}/verify`).then(r=>r.json());
