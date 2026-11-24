@@ -38,3 +38,27 @@ def _load_or_create(path: Path, is_private=True):
     return key
 
 
+def _build_header(version: str, device_id: str, vendor: str,
+                  payload_hash: bytes, sig: bytes, timestamp: int) -> bytes:
+    hdr = bytearray(HEADER_SIZE)
+    hdr[0:4]   = MAGIC
+    hdr[4:20]  = version.encode().ljust(16, b"\x00")[:16]
+    hdr[20:52] = device_id.encode().ljust(32, b"\x00")[:32]
+    hdr[52:68] = vendor.encode().ljust(16, b"\x00")[:16]
+    hdr[68:100] = payload_hash
+    hdr[SIG_OFFSET:SIG_OFFSET+64] = sig
+    hdr[164:172] = timestamp.to_bytes(8, "little")
+    hdr[172:176] = (1).to_bytes(4, "little")  # flags: signed
+    return bytes(hdr)
+
+
+def _make_payload(seed: str, size: int = 8192, tamper: bool = False) -> bytes:
+    rng = random.Random(seed)
+    data = bytearray(rng.randint(0, 255) for _ in range(size))
+    if tamper:
+        data[42]  ^= 0xFF
+        data[100] ^= 0xAA
+        data[200] ^= 0x55
+    return bytes(data)
+
+
