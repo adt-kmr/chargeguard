@@ -12,7 +12,7 @@ env/
 
 # Environment / secrets
 .env
-*.pem
+/*.pem
 firmware/keys/
 
 # Generated at runtime by `python main.py`
