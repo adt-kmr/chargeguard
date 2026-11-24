@@ -6,3 +6,5 @@ PyYAML>=6.0
 rich>=13.0
 ocpp==2.1.0
 websockets>=13.0
+scikit-learn>=1.4
+numpy>=1.26

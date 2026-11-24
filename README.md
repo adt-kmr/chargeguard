@@ -25,7 +25,7 @@ The repository has three layers:
 
 | Layer | What it is | Status |
 |---|---|---|
-| **Live verification system** | An OCPP 1.6-J charger process, the ChargeGuard gateway that terminates its connection inline, real C1–C4 checks on what the gateway observes, trust engine, enforcement, advisor, signed evidence and the live dashboard | Runs end to end today (`python main.py`); 10 attack scenarios verified, see [DEMO.md](DEMO.md) |
+| **Live verification system** | An OCPP 1.6-J charger process, the ChargeGuard gateway that terminates its connection inline, real C1–C4 checks on what the gateway observes, trust engine, enforcement, advisor, signed evidence and the live dashboard | Runs end to end today (`python main.py`); 11 attack scenarios verified, see [DEMO.md](DEMO.md) |
 | **Security integration layer** | [`attestation/`](attestation/README.md) for TPM 2.0 identity, and [`integrations/`](integrations/README.md) adapters for firmware integrity, firmware audit, behaviour baseline, evidence bundles and the attack lab | Attestation verifier and behaviour baseline run in the live path; the external-tool adapters are unit-tested and used in audit mode |
 | **Vendored toolchain** | 25 open-source security tools in [`vendor/`](vendor/README.md), grouped by capability, with license notices | Source snapshots; built per tool as needed |
 
@@ -92,8 +92,9 @@ ChargeGuard applies that brief to one high-value device class. It fits two of th
 | Explain threats to non-expert users in plain language | [`advisor/`](advisor/engines.py) turns each signed verdict into a plain-language explanation, the risk, and up to three remediation steps, shown on the dashboard and stored in the report | Rule-based engine grounded in the evidence runs today and is labelled as such; the Llama engine is implemented against ExecuTorch's runner and activates when the model is exported |
 | Recommend remediation actions | Verdict reasons include the action. The behaviour monitor outputs block, isolate or rate-limit and renders a wolfSentry firewall policy | Implemented |
 | Offline threat intelligence | Firmware is audited once (SBOM, CVEs, secrets, hardening) and the result is cached by firmware hash for offline lookup | Implemented in the integration layer |
-| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | `LlamaExecuTorchAdvisor` in [`advisor/engines.py`](advisor/engines.py): builds a Llama 3.2 chat prompt from the evidence and runs ExecuTorch's `llama_main` runner on the CPU, with a grounded fallback | **Integration code in place; model export and on-device run not done yet**. Design in [Arm architecture and tools](#arm-architecture-and-tools) |
-| Phishing URL and scam-message detection | Not part of the charger threat model. A charger console URL / QR-code checker for drivers is a candidate extension | Not implemented |
+| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | `LlamaExecuTorchAdvisor` in [`advisor/engines.py`](advisor/engines.py) runs Llama 3.2 1B Instruct (4-bit SpinQuant) through ExecuTorch's in-process `TextLLMRunner`; [`advisor/export_llama.sh`](advisor/export_llama.sh) produces the `.pte` with the XNNPACK SpinQuant configuration | **ExecuTorch 1.6 toolchain installed and the export verified up to the licence-gated weight download.** The model is exported once the Llama 3.2 licence is accepted and Hugging Face login is done; until then the grounded engine runs and is labelled |
+| Detect phishing URLs | [`threatintel/`](threatintel/README.md): hostname model trained on UCI PhiUSIIL (grouped split, no domain overlap) + explicit rules + curated known-good list; also checks the **payment QR code every charger displays** | Implemented: F1 0.750, ROC-AUC 0.888 on 30,093 held-out hostnames; exported to ExecuTorch |
+| Detect scam SMS / fraudulent communications | [`threatintel/`](threatintel/README.md): message model trained on the UCI SMS Spam Collection, with link extraction and per-n-gram explanations; dashboard **Driver Safety Check** | Implemented: F1 0.942, false-positive rate 0.44% on 776 held-out messages; exported to ExecuTorch |
 
 ## How it works
 
@@ -227,18 +228,19 @@ The dashboard's attack panel also composes attacks individually:
 - **Renode** ([`vendor/attack-lab/renode`](vendor/attack-lab/renode)). Boots Cortex-M charger firmware without hardware ([`integrations/attack_lab/renode.py`](integrations/attack_lab/renode.py)), so tampered-image tests run in CI.
 - **wolfBoot, wolfTPM, wolfSentry.** Bootloader, TPM and firewall libraries for Cortex-M targets.
 
-### Planned on-device AI: two separate pipelines
+### On-device AI: two separate pipelines
 
-| | Advisor (required technology) | Traffic classifier (optional accelerator) |
-|---|---|---|
-| Model | Llama 3.2 1B Instruct | Compact tabular/sequence classifier trained on CICIDS2017 / UNSW-NB15 flow features plus recorded charger baselines |
-| Runtime | ExecuTorch, XNNPACK backend (KleidiAI micro-kernels for Arm) | HailoRT on the AI HAT+ NPU when fitted; otherwise ExecuTorch on the CPU |
-| Compute unit | Cortex-A76 CPU | Hailo NPU, or the Cortex-A76 CPU |
-| Input | Verdict, per-check findings, CVE list and behaviour anomalies (structured JSON) | Flow features from the behaviour monitor |
-| Output | Plain-language explanation and ranked remediation steps, grounded only in the evidence it is given | Anomaly score feeding C4 alongside the rule baseline |
-| Path in the 5-second budget | Outside it: runs after the verdict is signed, so a slow generation never delays the decision | Inside the C4 window |
+| | Advisor (required technology) | Threat detectors | Traffic classifier (optional accelerator) |
+|---|---|---|---|
+| Status | Toolchain installed and export script verified; weights pending licence acceptance | **Built, evaluated and exported to ExecuTorch** | Planned |
+| Model | Llama 3.2 1B Instruct, 4-bit SpinQuant | Two linear models over hashed n-grams (scam messages, phishing hostnames) | Compact classifier on CICIDS2017 / UNSW-NB15 flow features plus recorded charger baselines |
+| Runtime | ExecuTorch `TextLLMRunner`, XNNPACK backend (KleidiAI micro-kernels on Arm) | ExecuTorch `.pte` (embedding-lookup network) or the identical NumPy path | HailoRT on the AI HAT+ NPU when fitted; otherwise ExecuTorch on the CPU |
+| Compute unit | Cortex-A76 CPU | Cortex-A76 CPU | Hailo NPU, or the Cortex-A76 CPU |
+| Input | Verdict, per-check findings, CVEs, anomalies, detector results (structured JSON) | Message text, links, QR payloads | Flow features from the behaviour monitor |
+| Output | Plain-language explanation and up to three remediation steps, grounded only in the facts given | Score, decision and the n-grams and rules behind it | Anomaly score feeding C4 alongside the rule baseline |
+| Place in the 5-second budget | Outside it: runs after the verdict is signed | Inside it: the charger's payment QR is checked during verification | Inside the C4 window |
 
-The two pipelines are independent. Llama never runs on the Hailo NPU, and the classifier never depends on Llama.
+The pipelines are independent. Llama never runs on the Hailo NPU, and neither detector depends on Llama.
 
 **Profiling plan.** Arm Performance Studio (Streamline) on the Pi 5, to attribute advisor latency to prefill, decode and memory bandwidth, and to confirm the verification path stays within its window while the advisor runs.
 
@@ -246,16 +248,32 @@ The two pipelines are independent. Llama never runs on the Hailo NPU, and the cl
 
 ### Measured: live gateway path
 
-Measured compute per check across the 10 scenarios in [`benchmarks/results/scenario_matrix.json`](benchmarks/results/scenario_matrix.json) (same development host as below, charger and gateway as separate processes on loopback):
+Measured compute per check across the 11 scenarios in [`benchmarks/results/scenario_matrix.json`](benchmarks/results/scenario_matrix.json) (same development host as below, charger and gateway as separate processes on loopback):
 
 | Check | Range across scenarios | Includes |
 |---|---|---|
-| C1 identity | 5.4 – 35.3 ms | OCPP `DataTransfer` round trip to the charger, Ed25519 check, TPM quote verification |
-| C2 integrity | 0.01 – 21.8 ms | Registry lookup, vendor signature, PCR0 comparison |
-| C3 weaknesses | 3.3 – 20.4 ms | Audit-cache lookup by firmware hash |
-| C4 behaviour | 0.15 – 2.2 ms | Baseline over the OCPP transcript and tap flows |
+| C1 identity | 7.6 – 45.7 ms | OCPP `DataTransfer` round trip to the charger, Ed25519 check, TPM quote verification |
+| C2 integrity | 0.01 – 21.5 ms | Registry lookup, vendor signature, PCR0 comparison |
+| C3 weaknesses | 3.3 – 19.0 ms | Audit-cache lookup by firmware hash |
+| C4 behaviour | 0.2 – 2.8 ms | Baseline over the OCPP transcript, tap flows and the payment-QR check |
 
 A verification therefore needs well under 100 ms of real work. The 5-second figure is the presentation schedule.
+
+### Measured: threat detectors
+
+Accuracy on held-out test splits ([`benchmarks/results/threatintel_metrics.json`](benchmarks/results/threatintel_metrics.json); protocol in [`threatintel/README.md`](threatintel/README.md)):
+
+| Model | Test size | Precision | Recall | F1 | ROC-AUC | False-positive rate |
+|---|---|---|---|---|---|---|
+| Scam messages | 776 messages | 0.968 | 0.918 | 0.942 | 0.991 | 0.44% |
+| Phishing hostnames (grouped by domain, no overlap) | 30,093 hostnames | 0.837 | 0.679 | 0.750 | 0.888 | 6.3% |
+
+ExecuTorch programs ([`benchmarks/results/executorch_detectors_x86_64-linux.json`](benchmarks/results/executorch_detectors_x86_64-linux.json)), ExecuTorch 1.6.0 with XNNPACK, measured on the development host's x86-64 CPU under WSL2, **not** the Arm target:
+
+| Program | Size | Max difference vs Python model | Decisions agreeing | Latency p50 / p95 |
+|---|---|---|---|---|
+| `sms_scam.pte` (300 real messages) | 2.1 MB | 5.0×10⁻⁵ | 100% | 0.012 / 0.013 ms |
+| `phishing_url.pte` | 1.05 MB | 1.2×10⁻⁷ | 100% | 0.013 / 0.015 ms |
 
 ### Measured: component micro-benchmarks
 
@@ -370,9 +388,10 @@ Generated files (`db/*.db`, `firmware/images/`, `firmware/keys/`, `evidence/repo
 ```bash
 python -m pytest tests
 ```
-29 tests cover:
+47 tests cover:
 
-- end to end: a real charger process over OCPP 1.6 against the live gateway for the healthy, tampered, vulnerable, clone and mid-session compromise scenarios, including signed-report verification ([`tests/test_live_gateway.py`](tests/test_live_gateway.py); stop the dashboard first, both use ports 9000 and 9100)
+- end to end: a real charger process over OCPP 1.6 against the live gateway for the healthy, tampered, vulnerable, clone, mid-session compromise and quishing scenarios, including signed-report verification ([`tests/test_live_gateway.py`](tests/test_live_gateway.py); stop the dashboard first, both use ports 9000 and 9100)
+- the scam-message and phishing-URL detectors, their explanations, the known-good list and the published metrics
 - the attestation layer
 - the behaviour baseline against every simulator attack mode
 - the wolfSentry policy output
@@ -383,7 +402,7 @@ python -m pytest tests
 **Scenario rehearsal**
 
 ```bash
-python -m simlab.run_headless          # all 10 scenarios, prints the verdict and enforcement for each
+python -m simlab.run_headless          # all 11 scenarios, prints the verdict and enforcement for each
 ```
 
 **Benchmark**
@@ -439,7 +458,9 @@ config.py          Paths, the 5-second schedule, gateway ports, site addressing
 gateway/           Inline OCPP 1.6 gateway: live C1–C4 checks, monitoring, enforcement, flow collector
 charger/           C10 OCPP 1.6 charger agent (separate process; runs on the charger Pi)
 simlab/            Scenario staging, network tap simulator, headless scenario runner
-advisor/           Plain-language advisor: Llama on ExecuTorch, grounded rule-based fallback
+advisor/           Plain-language advisor: Llama on ExecuTorch, grounded rule-based fallback, export script
+threatintel/       On-device scam-message and phishing-URL detectors, training, ExecuTorch export
+data/              Dataset checksums (raw data is fetched by scripts/fetch_datasets.py, git-ignored)
 audit/             One-time firmware audit (component banners → curated real-CVE feed)
 checks/            Original in-process C1–C4 checks (used by the benchmark)
 orchestrator/      C5 orchestrator and trust engine
@@ -452,7 +473,7 @@ db/                SQLite registry: firmware, CVEs, identities, attestation keys
 attestation/       C1 TPM 2.0 attestation: backends, verifiers, emulator launcher
 integrations/      C2–C4, C7, C9 adapters for the vendored security tools
 benchmarks/        Hot-path benchmark and committed results
-scripts/           Asset preparation (dashboard 3D vehicle model)
+scripts/           Dataset fetcher and asset preparation (dashboard 3D vehicle model)
 tests/             pytest suite
 vendor/            Vendored open-source tools, grouped by capability
 ```
@@ -481,20 +502,22 @@ Each layer has its own documentation: [`attestation/README.md`](attestation/READ
 
 **Done**
 
-- Live system: OCPP 1.6 charger process, inline gateway, real C1–C4 checks on observed data, continuous monitoring, enforcement (remote stop, disconnect, quarantine), 10 scenarios passing end to end
+- Live system: OCPP 1.6 charger process, inline gateway, real C1–C4 checks on observed data, continuous monitoring, enforcement (remote stop, disconnect, quarantine), 11 scenarios passing end to end
 - Measured-boot attestation over OCPP `DataTransfer` and a one-time firmware audit against real CVEs
 - Advisor with labelled engines; signed report covering the full body, verifiable from the dashboard
 - Signed, compliance-mapped evidence report (17 controls, five standards)
+- On-device scam-message and phishing-URL detectors with an honest evaluation protocol, exported to ExecuTorch with verified parity
+- Payment-QR ("quishing") check on every charger, and a Driver Safety Check in the dashboard
+- ExecuTorch 1.6 toolchain and the Llama 3.2 1B SpinQuant export path, ready for the licence-gated weights
 - TPM 2.0 attestation layer with software, tpm2-tss and Keylime paths, and an IBM TPM emulator launcher
 - Integration adapters for firmware integrity, firmware audit with a per-hash cache, behaviour baseline with block and isolate, SARIF + CycloneDX evidence bundles and a Renode attack lab
 - Hot-path benchmark with committed results
 
 **Next**
 
-- Llama 3.2 1B Instruct advisor exported with ExecuTorch (XNNPACK) running on the Pi 5 CPU, grounded in the signed evidence
+- Export Llama 3.2 1B Instruct (SpinQuant) with the prepared script once the licence is accepted, and measure tokens per second on the Pi 5
 - Learned traffic classifier (CICIDS2017 / UNSW-NB15 plus charger captures) beside the rule baseline; HailoRT on the AI HAT+ where fitted
 - Hardware path: tpm2-tss backend against a real TPM, packet capture on the node's bridge instead of the tap simulator, nftables rules applied
-- Phishing URL and scam-message detection module
 - Persistent SQLite connections on the hot path
 - Bundle the dashboard's JavaScript libraries for fully air-gapped operation
 - Run the benchmark on the Raspberry Pi 5, and profile with Arm Performance Studio

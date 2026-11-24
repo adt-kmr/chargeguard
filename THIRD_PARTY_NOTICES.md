@@ -39,6 +39,28 @@ be preserved.
 | Facedancer | `98790aa`, 2026-11-05 | `attack-lab/facedancer` | BSD-3-Clause |
 | Renode | `b366439`, 2026-11-23 | `attack-lab/renode` | MIT |
 
+## Training data
+
+The threat-detector weights in `threatintel/weights/` were trained on these
+datasets. The raw data is not redistributed: `scripts/fetch_datasets.py`
+downloads it into the git-ignored `data/raw/` and checks it against
+`data/checksums.json`.
+
+| Dataset | Source | License | Use |
+|---------|--------|---------|-----|
+| SMS Spam Collection (T. A. Almeida, J. M. Gómez Hidalgo) | UCI Machine Learning Repository, dataset 228 | CC-BY-4.0 | Scam-message model |
+| PhiUSIIL Phishing URL Dataset (A. Prasad, S. Chandra) | UCI Machine Learning Repository, dataset 967 | CC-BY-4.0 | Phishing-hostname model |
+
+**Changes made:** duplicate messages removed; URLs reduced to hostnames (scheme,
+`www.` and path removed); hostnames labelled both ways dropped. See `threatintel/README.md`.
+
+## Runtime (not vendored)
+
+ExecuTorch 1.6.0 (BSD-3-Clause, PyTorch / Meta) and PyTorch are installed from PyPI
+in a separate environment for model export and the on-device runtime. Llama 3.2
+weights are not included in this repository and are subject to Meta's Llama 3.2
+Community License, which each user accepts individually.
+
 ## Dashboard assets
 
 | Asset | Source | Path | License |

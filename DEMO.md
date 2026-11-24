@@ -34,6 +34,8 @@ The console shows the provisioning steps, then the gateway (`ws://127.0.0.1:9000
 | 2 | Tampered | "Someone modified the firmware after the vendor signed it." | Identity passes (it is the real device), integrity **fails**, verdict **red**, authorisation for the RFID card is refused |
 | 3 | Vulnerable | "This firmware is genuine, but old." | **Amber 60/100**: 5 real CVEs in OpenSSL 1.1.1k, zlib 1.2.11, BusyBox 1.33.0, max CVSS 9.8; charging allowed with an upgrade recommendation |
 | 4 | Compromised | "It passes at plug-in — but ChargeGuard keeps watching. Mid-session, the charger starts scanning the LAN." | Green, charging, status **LIVE MONITORING** with a check counter ("Check #8: normal…"). About 9 s in: **THREAT DETECTED MID-SESSION**, ring flips to **red 15/100**, then **CHARGER ISOLATED** with the remote stop and quarantine steps |
+| Bonus | Custom → Payment QR: Quishing QR | "Attackers stick fake QR codes on chargers. ChargeGuard checks the QR every charger displays." | **Red**: the payment QR points to `chargepoint-pay.top`; charger isolated, with a plain-language explanation for the operator |
+| Bonus | Driver Safety Check: Scam SMS / Fake pay link | "Drivers get scam texts about their charging account. The same on-device models check them in a few milliseconds." | Verdict, score, the words and rules behind it, and the advisor's steps |
 | Close | Open Evidence Report | "Every verdict is signed and mapped to the standards." | Per-check results, CVEs, attestation (payload hash, PCR0, quote), enforcement steps, advisor, **Verify signature** |
 
 The **Custom** preset composes any identity (legitimate, rogue, clone), firmware (good, tampered, vulnerable), behaviour (port scan, C2 beacon, DNS exfiltration, OCPP flood) and timing (at plug-in or mid-session).
@@ -41,7 +43,7 @@ The **Custom** preset composes any identity (legitimate, rogue, clone), firmware
 ## Rehearse without the dashboard
 
 ```bash
-python -m simlab.run_headless                  # all 10 scenarios
+python -m simlab.run_headless                  # all 11 scenarios
 python -m simlab.run_headless compromised -v   # one scenario, event by event
 ```
 
@@ -59,6 +61,7 @@ Stop the dashboard first; both use ports 9000/tcp and 9100/udp. The last full ru
 | dns_exfil | red | high-rate DNS to a public resolver with encoded labels → isolate |
 | ocpp_flood | red | MeterValues flood above the OCPP rate baseline → block |
 | c2_mid_session | red, mid-session | C2 over an OCPP `DataTransfer` extension during charging → isolate |
+| quishing | red | the payment QR on the charger screen points to a look-alike payment site → isolate |
 
 ## If something goes wrong
 
