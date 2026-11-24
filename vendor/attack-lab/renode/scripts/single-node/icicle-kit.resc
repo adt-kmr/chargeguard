@@ -1,0 +1,22 @@
+:name: Icicle Kit
+:description: This is a sample script running HSS, U-Boot and Linux on Icicle Kit with PolarFire SoC
+
+$bin?=@https://dl.antmicro.com/projects/renode/icicle--hss.elf-s_2192312-c517b6b29f90a5f93af23986f34a38ca91c91105
+$uboot?=@https://dl.antmicro.com/projects/renode/icicle--u-boot-s_4510704-f916069db61355249ecc6d993f1ec256f215e958
+$vmlinux?=@https://dl.antmicro.com/projects/renode/icicle--vmlinux-s_8415320-614ebfbe6bea0b0feb5c3067eef712e70d5003a4
+$fit?=@https://dl.antmicro.com/projects/renode/icicle--fitImage.fit-s_15409092-c33a3599f8af96a8e73de2bad7d0f9c100949236
+$emmc?=@https://dl.antmicro.com/projects/renode/icicle--emmc.img-s_4214784-46880d585c8e00caae76b8de3313a97434eceee0
+
+i @scripts/single-node/polarfire-soc.resc
+
+showAnalyzer mmuart1
+machine SdCardFromFile $emmc mmc 0x100000000 persistent=false
+
+macro reset
+"""
+    sysbus LoadBinary $fit 0x88300000
+    sysbus LoadSymbolsFrom $vmlinux
+    sysbus LoadSymbolsFrom $uboot
+"""
+runMacro $reset
+

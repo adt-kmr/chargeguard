@@ -1,0 +1,107 @@
+*** Variables ***
+${ORDINARY_TAG_START}               0x0
+${OVERRIDING_SILENT_TAG_START}      0x8
+${OVERRIDING_TAG_START}             0x10
+${ONESHOT_TAG_START}                0x18
+${TAG_SIZE}                         0x8
+${TAG_VALUE_BYTE}                   0xF0
+${TAG_VALUE_WORD}                   0xF1F0
+${TAG_VALUE_DWORD}                  0xF3F2F1F0
+${TAG_VALUE_QWORD}                  0xF7F6F5F4F3F2F1F0
+${MEM_START}                        0x0
+${NOT_COVERED_MEM_START}            0x20
+${MEM_SIZE}                         0x30
+${MEM_VALUE_BYTE}                   0x01
+${MEM_VALUE_WORD}                   0x0101
+${MEM_VALUE_DWORD}                  0x01010101
+
+*** Keywords ***
+Create Machine With Tags An Array Memory
+    #  Memory layout:
+
+    # |00|01|02|03|04|05|06|07|08|09|0A|0B|0C|0D|0E|0F|10|11|12|13|14|15|16|17|18|19|1A|1B|1C|1D|1E|1F|20|...|2F|
+    # | ------------------------------------------------------------------------------------------------------- |
+    # | ordinary tag  | overriding tag  |  ---  |
+    # | memory filled with 0x1 at each cell  |
+
+    Execute Command                 mach create
+    Execute Command                 sysbus Tag <${OVERRIDING_TAG_START} ${TAG_SIZE}> "overridingTag" ${TAG_VALUE_QWORD} overridePeripheralAccesses=True
+    Execute Command                 sysbus Tag <${OVERRIDING_SILENT_TAG_START} ${TAG_SIZE}> "overridingSilentTag" ${TAG_VALUE_QWORD} overridePeripheralAccesses=True silent=True
+    Execute Command                 sysbus Tag <${ORDINARY_TAG_START} ${TAG_SIZE}> "ordinaryTag" ${TAG_VALUE_QWORD} overridePeripheralAccesses=False
+    Execute Command                 sysbus Tag <${ONESHOT_TAG_START} ${TAG_SIZE}> "oneShotTag" ${TAG_VALUE_QWORD} overridePeripheralAccesses=True oneShot=True
+    Execute Command                 machine LoadPlatformDescriptionFromString "mem: Memory.ArrayMemory @ sysbus ${MEM_START} { size : ${MEM_SIZE}; initialValue: ${MEM_VALUE_BYTE} }"
+
+*** Test Cases ***
+Overriding Tag Should Override ReadByte Access To A Peripheral
+    Create Machine With Tags An Array Memory
+
+    ${read_byte}=                   Execute Command  sysbus ReadByte ${OVERRIDING_TAG_START}
+    Should Be Equal As Numbers      ${TAG_VALUE_BYTE}  ${read_byte}
+
+Overriding Tag Should Override ReadWord Access To A Peripheral
+    Create Machine With Tags An Array Memory
+
+    ${read_word}=                   Execute Command  sysbus ReadWord ${OVERRIDING_TAG_START}
+    Should Be Equal As Numbers      ${TAG_VALUE_WORD}  ${read_word}
+
+Ordinary Tag Should Not Override ReadByte Access To A Peripheral
+    Create Machine With Tags An Array Memory
+
+    ${read_byte}=                   Execute Command  sysbus ReadByte ${ORDINARY_TAG_START}
+    Should Be Equal As Numbers      ${MEM_VALUE_BYTE}  ${read_byte}
+
+Ordinary Tag Should Not Override ReadWord Access To A Peripheral
+    Create Machine With Tags An Array Memory
+
+    ${read_word}=                   Execute Command  sysbus ReadWord ${ORDINARY_TAG_START}
+    Should Be Equal As Numbers      ${MEM_VALUE_WORD}  ${read_word}
+
+Write To An Overriding Tag Should Not Write To Peripheral
+    Create Machine With Tags An Array Memory
+
+    ${SOME_VALUE}=                  Set Variable  0x11
+    Execute Command                 sysbus WriteByte ${OVERRIDING_TAG_START} ${SOME_VALUE}
+    Execute Command                 sysbus RemoveTag ${OVERRIDING_TAG_START}
+    ${read_byte}=                   Execute Command  sysbus ReadByte ${OVERRIDING_TAG_START}
+    Should Be Equal As Numbers      ${read_byte}  ${MEM_VALUE_BYTE}
+
+Access To An Overriding Silent Tag Should Not Log Warning
+    Create Machine With Tags An Array Memory
+    Create Log Tester               0
+
+    Execute Command                 sysbus ReadByte ${OVERRIDING_TAG_START}
+    Wait For Log Entry              ReadByte from overriding tag at ${OVERRIDING_TAG_START}
+    Execute Command                 sysbus ReadByte ${OVERRIDING_SILENT_TAG_START}
+    Should Not Be In Log            ReadByte from overriding tag at ${OVERRIDING_SILENT_TAG_START}
+
+OneShot Overriding Tag Should Override Read Exactly Once
+    Create Machine With Tags An Array Memory
+
+    ${read_word}=                   Execute Command  sysbus ReadWord ${ONESHOT_TAG_START}
+    Should Be Equal As Numbers      ${TAG_VALUE_WORD}  ${read_word}
+
+    ${read_word}=                   Execute Command  sysbus ReadWord ${ONESHOT_TAG_START}
+    Should Be Equal As Numbers      ${MEM_VALUE_WORD}  ${read_word}
+
+Tag With ThrowException Should Throw On Read
+    Create Machine With Tags An Array Memory
+    Execute Command                 sysbus Tag <0x100 0x10> "throwingTag" throwException=True
+
+    Run Keyword And Expect Error    *Bus access failed with error: AddressError*  Execute Command  sysbus ReadByte 0x100
+
+Tag With ThrowException Should Throw On Write
+    Create Machine With Tags An Array Memory
+    Execute Command                 sysbus Tag <0x100 0x10> "throwingTag" throwException=True
+
+    Run Keyword And Expect Error    *Bus access failed with error: AddressError*  Execute Command  sysbus WriteByte 0x100 0x1
+
+ThrowExceptionIfNotTagged Should Only Throw For Untagged Addresses
+    Create Machine With Tags An Array Memory
+    Execute Command                 sysbus UnhandledAccessBehaviour ThrowExceptionIfNotTagged
+    Execute Command                 sysbus Tag <0x100 0x10> "ordinaryTag"
+
+    ${read_byte}=                   Execute Command  sysbus ReadByte 0x100
+    Should Be Equal As Numbers      ${read_byte}  0
+
+    Run Keyword And Expect Error    *Bus access failed with error: AddressError*  Execute Command  sysbus ReadByte 0x200
+    Run Keyword And Expect Error    *Bus access failed with error: AddressError*  Execute Command  sysbus WriteByte 0x200 0x1

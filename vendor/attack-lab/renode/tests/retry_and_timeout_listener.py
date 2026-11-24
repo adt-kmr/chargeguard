@@ -1,0 +1,129 @@
+from typing import Optional
+
+from robot import result, running
+from robot.libraries.DateTime import Time
+
+from state_dependency_listener import keyword_states
+from tests_engine import TestTag
+
+# This listener wraps the RetryFailed listener to gracefully skip retrying for timed-out tests.
+# Failure is silenced because the lack of `RetryFailed` isn't a problem if `retry_count` is one.
+try:
+    from RetryFailed import RetryFailed
+except:
+    pass
+
+# The name isn't CamelCase typically used for Python classes only because it
+# has to match the name of the file and snake_case is used for other listeners.
+class retry_and_timeout_listener:
+    ROBOT_LISTENER_API_VERSION = 3
+
+    def __init__(self, retry_count):
+        if int(retry_count) > 1:
+            global_retries = int(retry_count) - 1  # Our `retry_count` includes the original test too.
+            self.retry_failed = RetryFailed(global_retries, keep_retried_tests=True)
+
+    # Redirects access to all callbacks not implemented in this listener to `RetryFailed` if it's used.
+    def __getattr__(self, name):
+        # This prevents infinite recursion if `self.retry_failed` wasn't initialized.
+        # None is always returned cause `__getattr__` won't be called if it was initialized.
+        if name == 'retry_failed':
+            return None
+
+        if self.retry_failed and hasattr(self.retry_failed, name):
+            return getattr(self.retry_failed, name)
+
+    def start_suite(self, suite: running.TestSuite, result: result.TestSuite):
+        # Grab our RobotTestSuite and restore the original parent.
+        (self.tests_provider, suite.parent) = suite.parent
+        self.after_restart: bool = False
+        self.suite_result: result.TestSuite = result
+        self.process_exits: list[str] = []
+        self.record_process_exit()
+
+        # start_suite isn't currently used by RetryFailed but let's check for future versions.
+        if self.retry_failed and hasattr(self.retry_failed, 'start_suite'):
+            self.retry_failed.start_suite(suite, result)
+
+    def record_process_exit(self) -> Optional[str]:
+        message = self.tests_provider.check_renode_process()
+        if message and message not in self.process_exits:
+            self.process_exits.append(message)
+            self.suite_result.metadata["Renode process exits"] = '\n\n'.join(self.process_exits)
+        return message
+
+    def end_suite(self, suite: running.TestSuite, result: result.TestSuite) -> None:
+        self.record_process_exit()
+        if self.retry_failed and hasattr(self.retry_failed, 'end_suite'):
+            self.retry_failed.end_suite(suite, result)
+
+    def end_test(self, test: running.TestCase, result: result.TestCase):
+        # Capture the old process before recovery replaces it, and before
+        # RetryFailed changes this attempt's message/status.
+        renode_exited: bool = self.tests_provider.has_renode_exited(result.message)
+        process_exit = self.record_process_exit()
+        timed_out = not result.passed and result.timeout and result.timeout.timed_out()
+        timeout_expected = self.tests_provider.timeout_expected_tag in test.tags
+        if timeout_expected and not process_exit:
+            # It passed if timeout occurred within the test timeout +3s.
+            tolerance_seconds = 3
+            over_timeout = result.elapsed_time.seconds - Time(test.timeout).seconds
+            if timed_out and over_timeout < tolerance_seconds:
+                result.status = result.PASS
+            else:
+                result.message = f"Expected timeout didn't occur in {test.timeout} (+{tolerance_seconds}s)"
+
+        # A test can deliberately pass after Renode exits (for example, a crash test)
+        # and known-unstable tests can be skipped. Keep their status and only add the
+        # exit reason to the message.
+        if process_exit and not result.passed:
+            result.message = '\n\n'.join(filter(None, (process_exit, result.message)))
+
+        lost_required_state: bool = renode_exited and bool(keyword_states(test, "Requires"))
+
+        # Mark messages that failed after Renode restarted except tests that timed out.
+        # It isn't really probable that Renode restart will cause timeouts.
+        if result.failed and self.after_restart and not timed_out and not lost_required_state:
+            result.message = result.message + '\n\n' + self.tests_provider.after_restart_message_suffix
+
+        if timed_out:
+            # See `_create_timeout_handler` in `robot_tests_provider`, mostly restarts Renode.
+            self.tests_provider.timeout_handler(test, result)
+            self.after_restart = True
+
+            # Let's prevent retrying a test with unexpected timeout but let's still call
+            # `RetryFailed.end_test` as `RetryFailed` might not properly work without it.
+            if self.retry_failed and not timeout_expected:
+                self.retry_failed.max_retries = self.retry_failed.retries
+        elif renode_exited:
+            self.tests_provider.crash_handler(test)
+            self.after_restart = True
+
+            # Don't retry a test with `Requires`, because the restart lost its state, so the retry can't pass.
+            # Its SKIP or its failure to find the state would replace the crash as the result of the test.
+            if self.retry_failed and result.failed and lost_required_state:
+                self.retry_failed.max_retries = self.retry_failed.retries
+                result.message += "\n\nNot retried in this suite run, because the restart lost the state it requires."
+
+        if self.retry_failed:
+            original_message = result.message
+            original_status = result.status
+            self.retry_failed.end_test(test, result)
+
+            # A retried attempt keeps the SKIP status set by `RetryFailed` (a failed
+            # attempt mustn't fail the suite) and is tagged so that everything parsing
+            # the output can tell it apart from the final attempt. Its message stays
+            # the unmodified failure message.
+            if self.retry_failed.retries != 0:
+                result.tags.add(TestTag.RETRIED_ATTEMPT)
+                result.message = original_message
+                return
+
+            # On the final attempt restore the original status changed by `RetryFailed`
+            # so that our output formatters print it as failed.
+            result.status = original_status
+
+            # Let's also restore the original message without suffixes added by `RetryFailed`
+            # unless it contains the number of attempts required in our test reporting.
+            if not self.tests_provider.retry_test_regex.search(result.message):
+                result.message = original_message

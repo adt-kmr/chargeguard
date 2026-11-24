@@ -1,0 +1,254 @@
+//
+// Copyright (c) 2010-2024 Antmicro
+//
+// This file is licensed under the MIT License.
+// Full license text is available in 'licenses/MIT.txt'.
+//
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+using Antmicro.Renode.Core;
+using Antmicro.Renode.Exceptions;
+using Antmicro.Renode.Utilities;
+
+namespace Antmicro.Renode.Network.ExternalControl
+{
+    public static class IInstanceBasedCommandExtensions
+    {
+        public static bool TryGetName(Command command, byte[] data, int offset, out string name, out MessagePayload response)
+        {
+            name = default;
+            response = default;
+
+            if(!TryDecodeNameLength(command, data, offset, out var length, out response))
+            {
+                return false;
+            }
+
+            return TryDecodeName(command, data, offset + NameLengthSize, length, out name, out response);
+        }
+
+        public static IEnumerable<byte> EncodeString(string name)
+        {
+            var nameBytes = Encoding.UTF8.GetBytes(name);
+            return BitConverter.GetBytes(nameBytes.Length).Concat(nameBytes);
+        }
+
+        public static int GetInstanceId(MessagePayload payload)
+        {
+            return BitConverter.ToInt32(payload.Data[InstanceIdOffset..(InstanceIdOffset + InstanceIdSize)]);
+        }
+
+        public static ReadOnlySpan<byte> GetPayloadData(MessagePayload payload)
+        {
+            return payload.Data[PayloadOffset..];
+        }
+
+        public static MessagePayload InvokeHandledWithInstance<T>(this IInstanceBasedCommand<T> @this, MessagePayload payload, Predicate<T> instanceFilter = null)
+            where T : IEmulationElement
+        {
+            if(payload.Data.Length < PayloadOffset)
+            {
+                return MessagePayload.Error(@this.Identifier, $"Expected at least {PayloadOffset} bytes of payload");
+            }
+            var id = GetInstanceId(payload);
+
+            var instance = default(T);
+            var instanceFound = false;
+            lock(@this.Instances)
+            {
+                // only non-negative instance ids are valid
+                if(id >= 0 && @this.Instances.TryGet(id, out instance))
+                {
+                    instanceFound = true;
+                }
+            }
+
+            if(instanceFound)
+            {
+                return @this.Invoke(instance, GetPayloadData(payload));
+            }
+
+            if(id != IInstanceBasedCommand<T>.RegisterNewInstanceSpecialId)
+            {
+                return MessagePayload.Error(@this.Identifier, $"Invalid instance id {id}");
+            }
+
+            // requested instance registration
+
+            if(!TryGetMachine(@this, payload.Data, out var machine, out var response))
+            {
+                return response;
+            }
+
+            if(!TryGetName(@this.Identifier, payload.Data, NameOffset, out var name, out response))
+            {
+                return response;
+            }
+
+            if(!@this.TryRegisterInstance(machine, name, instanceFilter, out id))
+            {
+                return MessagePayload.Error(@this.Identifier, "Instance not found");
+            }
+
+            return MessagePayload.Success(@this.Identifier, id.AsRawBytes());
+        }
+
+        public const int HeaderSize = InstanceIdSize;
+
+        private static bool TryRegisterInstance<T>(this IInstanceBasedCommand<T> @this, IMachine machine, string name, Predicate<T> instanceFilter, out int id)
+            where T : IEmulationElement
+        {
+            id = default(int);
+            if(!EmulationManager.Instance.CurrentEmulation.TryGetEmulationElementByName(name, machine, out var instance))
+            {
+                return false;
+            }
+
+            if(!(instance is T) || (!instanceFilter?.Invoke((T)instance) ?? false))
+            {
+                return false;
+            }
+
+            lock(@this.Instances)
+            {
+                @this.Instances.TryAdd((T)instance, out id);
+            }
+            return true;
+        }
+
+        private static bool TryGetMachine(this ICommand @this, byte[] data, out IMachine machine, out MessagePayload response)
+        {
+            machine = default;
+            response = default;
+
+            if(data.Length < MachineIdOffset + MachineIdSize)
+            {
+                response = MessagePayload.Error(@this.Identifier, $"Expected at least {MachineIdOffset + MachineIdSize} bytes of payload");
+                return false;
+            }
+
+            var id = BitConverter.ToInt32(data[MachineIdOffset..]);
+            if(@this.Machines?.TryGetMachine(id, out machine) ?? false)
+            {
+                return true;
+            }
+
+            response = MessagePayload.Error(@this.Identifier, "Invalid machine id");
+            return false;
+        }
+
+        private static bool TryDecodeNameLength(Command command, byte[] data, int offset, out int length, out MessagePayload response)
+        {
+            response = default;
+
+            if(data.Length < offset + NameLengthSize)
+            {
+                length = default(int);
+                response = MessagePayload.Error(command, $"Expected at least {offset + NameLengthSize} bytes of payload");
+                return false;
+            }
+
+            length = BitConverter.ToInt32(data[offset..]);
+
+            if(length <= 0)
+            {
+                response = MessagePayload.Error(command, "Provided length value is illegal");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryDecodeName(Command command, byte[] data, int offset, int length, out string name, out MessagePayload response)
+        {
+            name = default;
+            response = default;
+
+            if(data.Length != offset + length)
+            {
+                response = MessagePayload.Error(command, $"Expected {offset + length} bytes of payload");
+                return false;
+            }
+
+            try
+            {
+                name = Encoding.UTF8.GetString(data[offset..][..length]);
+            }
+            catch(Exception)
+            {
+                response = MessagePayload.Error(command, "Invalid name encoding");
+                return false;
+            }
+
+            return true;
+        }
+
+        private const int PayloadOffset = InstanceIdOffset + InstanceIdSize;
+        private const int InstanceIdOffset = 0;
+        private const int InstanceIdSize = 4;
+        private const int MachineIdOffset = InstanceIdSize;
+        private const int MachineIdSize = 4;
+        private const int NameOffset = MachineIdOffset + MachineIdSize;
+        private const int NameLengthSize = 4;
+    }
+
+    public interface IInstanceBasedCommand<T> : ICommand
+        where T : IEmulationElement
+    {
+        public int GetExternalInstanceId(ExternalControlEndpoint externalControl, int machineId, string remoteInstance)
+        {
+            var data = BitConverter.GetBytes(RegisterNewInstanceSpecialId)
+                .Concat(BitConverter.GetBytes(machineId))
+                .Concat(IInstanceBasedCommandExtensions.EncodeString(remoteInstance));
+            var response = externalControl.SendRequest(new MessagePayload(Identifier, CommandType.Request, data.ToArray()));
+            response.ThrowOnError(Identifier);
+
+            if(response.Data.Length != sizeof(int))
+            {
+                throw new RecoverableException("Unexpected length of response: {response}");
+            }
+
+            return BitConverter.ToInt32(response.Data);
+        }
+
+        InstanceCollection<T> Instances { get; }
+
+        MessagePayload Invoke(T instance, ReadOnlySpan<Byte> payload);
+
+        public const int RegisterNewInstanceSpecialId = -1;
+    }
+
+    public class InstanceCollection<T>
+    {
+        public InstanceCollection()
+        {
+            collection = new Dictionary<int, T>();
+        }
+
+        public T this[int id] => collection[id];
+
+        public bool TryAdd(T instance, out int id)
+        {
+            id = nextId;
+
+            if(nextId < 0)
+            {
+                return false;
+            }
+            nextId += 1;
+
+            collection.Add(id, instance);
+            return true;
+        }
+
+        public void Remove(int id) => collection.Remove(id);
+
+        public bool TryGet(int id, out T instance) => collection.TryGetValue(id, out instance);
+
+        private int nextId;
+        private readonly Dictionary<int, T> collection;
+    }
+}
