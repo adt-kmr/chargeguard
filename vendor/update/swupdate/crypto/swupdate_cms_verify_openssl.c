@@ -1,0 +1,660 @@
+/*
+ * (C) Copyright 2019
+ * Stefano Babic, stefano.babic@swupdate.org.
+ *
+ * SPDX-License-Identifier:     GPL-2.0-only
+ *
+ * Code mostly taken from openssl examples
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include "swupdate.h"
+#include "swupdate_openssl.h"
+#include "util.h"
+#include "swupdate_crypto.h"
+
+#if defined(CONFIG_CMS_SKIP_UNKNOWN_SIGNERS) || defined(CONFIG_CMS_IGNORE_ADDITIONAL_CERTS)
+#define VERIFY_CMS_FLAGS (CMS_NO_SIGNER_CERT_VERIFY)
+#else
+#define VERIFY_CMS_FLAGS (0)
+#endif
+
+#define MODNAME	"opensslCMS"
+
+static swupdate_dgst_lib	libs;
+
+static int openssl_map_purpose [] = {
+	[CERT_PURPOSE_EMAIL_PROT] = X509_PURPOSE_SMIME_SIGN,
+	[CERT_PURPOSE_CODE_SIGN] = X509_PURPOSE_CODE_SIGN
+};
+
+static inline int get_x509_purpose(unsigned int purpose) {
+	if (purpose > CERT_PURPOSE_LAST)
+		purpose = CERT_PURPOSE_EMAIL_PROT;
+	return openssl_map_purpose[purpose];
+}
+
+static inline uint32_t SSL_X509_get_extension_flags(X509 *x)
+{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	return x->ex_flags;
+#else
+	return X509_get_extension_flags(x);
+#endif
+}
+
+static inline uint32_t SSL_X509_get_extended_key_usage(X509 *x)
+{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	return x->ex_xkusage;
+#else
+	return X509_get_extended_key_usage(x);
+#endif
+}
+
+#ifndef CONFIG_CMS_IGNORE_CERTIFICATE_PURPOSE
+static int check_code_sign(const X509_PURPOSE *xp, const X509 *crt, int ca)
+{
+	X509 *x = (X509 *)crt;
+	uint32_t ex_flags = SSL_X509_get_extension_flags(x);
+	uint32_t ex_xkusage = SSL_X509_get_extended_key_usage(x);
+
+	(void)xp;
+
+	if (ca) {
+		int idx;
+		const X509_PURPOSE *pt;
+
+		if ((ex_flags & EXFLAG_XKUSAGE) && !(ex_xkusage & XKU_CODE_SIGN))
+			return 0;
+
+		idx = X509_PURPOSE_get_by_id(X509_PURPOSE_OCSP_HELPER);
+		if (idx == -1)
+			return 0;
+
+		pt = X509_PURPOSE_get0(idx);
+		return pt->check_purpose(pt, x, ca);
+	}
+
+	return (ex_flags & EXFLAG_XKUSAGE) && (ex_xkusage & XKU_CODE_SIGN);
+}
+#endif
+
+static int cms_verify_callback(int ok, X509_STORE_CTX *ctx) {
+	int cert_error = X509_STORE_CTX_get_error(ctx);
+
+	if (!ok) {
+		switch (cert_error) {
+#if defined(CONFIG_CMS_IGNORE_EXPIRED_CERTIFICATE)
+		case X509_V_ERR_CERT_HAS_EXPIRED:
+		case X509_V_ERR_CERT_NOT_YET_VALID:
+			ok = 1;
+			break;
+#endif
+#if defined(CONFIG_CMS_IGNORE_CERTIFICATE_PURPOSE)
+		case X509_V_ERR_INVALID_PURPOSE:
+			ok = 1;
+			break;
+#endif
+		default:
+			break;
+		}
+	}
+
+	return ok;
+}
+
+static X509_STORE *load_cert_chain(const char *file)
+{
+	X509_STORE *castore = X509_STORE_new();
+	if (!castore) {
+		return NULL;
+	}
+
+	/*
+	 * Set error callback function for verification of CRTs and CRLs in order
+	 * to ignore some errors depending on configuration
+	 */
+	X509_STORE_set_verify_cb(castore, cms_verify_callback);
+
+	BIO *castore_bio = BIO_new_file(file, "r");
+	if (!castore_bio) {
+		TRACE("failed: BIO_new_file(%s)", file);
+		return NULL;
+	}
+
+	int crt_count = 0;
+	X509 *crt = NULL;
+	do {
+		crt = PEM_read_bio_X509(castore_bio, NULL, 0, NULL);
+		if (crt) {
+			crt_count++;
+			char *subj = X509_NAME_oneline(X509_get_subject_name(crt), NULL, 0);
+			char *issuer = X509_NAME_oneline(X509_get_issuer_name(crt), NULL, 0);
+			TRACE("Read PEM #%d: %s %s", crt_count, issuer, subj);
+			free(subj);
+			free(issuer);
+			if (X509_STORE_add_cert(castore, crt) == 0) {
+				TRACE("Adding certificate to X509_STORE failed");
+				BIO_free(castore_bio);
+				X509_STORE_free(castore);
+				return NULL;
+			}
+		}
+	} while (crt);
+	BIO_free(castore_bio);
+
+	if (crt_count == 0) {
+		X509_STORE_free(castore);
+		return NULL;
+	}
+
+	return castore;
+}
+
+static void report_crl_err(unsigned long err, const char *crl_file)
+{
+	char err_buf[256] = {0};
+
+	ERR_error_string_n(err, err_buf, sizeof(err_buf));
+	ERROR("Malformed CRL in %s: %s", crl_file, err_buf);
+	ERR_clear_error();
+}
+
+static int add_crl_to_store(X509_STORE *castore, const char *crl_file,
+			    bool check_all)
+{
+	BIO *fp = BIO_new_file(crl_file, "rb");
+	if (!fp) {
+		TRACE("Unable to open CRL file %s", crl_file);
+		return 0;
+	}
+
+	int crl_count = 0;
+	X509_CRL *crl = NULL;
+	ERR_clear_error();
+	while ((crl = PEM_read_bio_X509_CRL(fp, NULL, NULL, NULL)) != NULL) {
+		crl_count++;
+		if (X509_STORE_add_crl(castore, crl) != 1) {
+			TRACE("Error adding CRL to store");
+			X509_CRL_free(crl);
+			BIO_free(fp);
+			return 0;
+		}
+
+		X509_CRL_free(crl);
+	}
+
+	unsigned long err = ERR_peek_last_error();
+	BIO_free(fp);
+
+	if (err) {
+		if (!(ERR_GET_LIB(err) == ERR_LIB_PEM &&
+		      ERR_GET_REASON(err) == PEM_R_NO_START_LINE)) {
+			report_crl_err(err, crl_file);
+			return 0;
+		}
+
+		ERR_clear_error();
+	}
+
+	if (crl_count == 0) {
+		fp = BIO_new_file(crl_file, "rb");
+		if (!fp) {
+			TRACE("Unable to reopen CRL file %s", crl_file);
+			return 0;
+		}
+
+		ERR_clear_error();
+		crl = d2i_X509_CRL_bio(fp, NULL);
+		err = ERR_peek_last_error();
+		BIO_free(fp);
+
+		if (!crl) {
+			if (err) {
+				report_crl_err(err, crl_file);
+			} else {
+				ERROR("No CRLs found in %s", crl_file);
+			}
+			return 0;
+		}
+
+		if (X509_STORE_add_crl(castore, crl) != 1) {
+			TRACE("Error adding CRL to store");
+			X509_CRL_free(crl);
+			return 0;
+		}
+
+		X509_CRL_free(crl);
+		crl_count = 1;
+		ERR_clear_error();
+	}
+
+	unsigned long crl_flags = X509_V_FLAG_CRL_CHECK;
+
+	if (check_all)
+		crl_flags |= X509_V_FLAG_CRL_CHECK_ALL;
+
+	if (!X509_STORE_set_flags(castore, crl_flags)) {
+		TRACE("Error setting CRL flags");
+		return 0;
+	}
+
+	return 1;
+}
+
+static inline int next_common_name(const X509_NAME *subject, int i)
+{
+	return X509_NAME_get_index_by_NID(subject, NID_commonName, i);
+}
+
+static int check_common_name(const X509_NAME *subject, const char *name)
+{
+	int i = -1, ret = 1;
+
+	while ((i = next_common_name(subject, i)) > -1) {
+		const X509_NAME_ENTRY *e = X509_NAME_get_entry(subject, i);
+		const ASN1_STRING *d = X509_NAME_ENTRY_get_data(e);
+		unsigned char *cn = NULL;
+		size_t len = strlen(name);
+		bool matches = (ASN1_STRING_to_UTF8(&cn, d) == (int)len)
+				&& (strncmp(name, (const char *)cn, len) == 0);
+
+		OPENSSL_free(cn);
+		if (!matches) {
+			char *subj = X509_NAME_oneline(subject, NULL, 0);
+
+			ERROR("common name of '%s' does not match expected '%s'",
+				subj, name);
+			OPENSSL_free(subj);
+			return 2;
+		} else {
+			ret = 0;
+		}
+	}
+
+	if (ret == 0) {
+		char *subj = X509_NAME_oneline(subject, NULL, 0);
+
+		TRACE("verified signer cert: %s", subj);
+		OPENSSL_free(subj);
+	}
+
+	return ret;
+}
+
+static int check_signer_name(CMS_ContentInfo *cms, const char *name)
+{
+	STACK_OF(CMS_SignerInfo) *infos = CMS_get0_SignerInfos(cms);
+	int i, ret;
+
+	if ((name == NULL) || (name[0] == '\0'))
+		return 0;
+
+	for (i = 0; i < sk_CMS_SignerInfo_num(infos); ++i) {
+		CMS_SignerInfo *si = sk_CMS_SignerInfo_value(infos, i);
+		X509 *signer = NULL;
+
+		CMS_SignerInfo_get0_algs(si, NULL, &signer, NULL, NULL);
+		if (!signer) {
+			ERROR("no certificate for signer %d", i);
+			return 1;
+		}
+
+		ret = check_common_name(X509_get_subject_name(signer), name);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+/*
+ * The digest algorithm is chosen by the signer: accept only
+ * algorithms that are not considered weak (no MD5, SHA-1, SHA-224).
+ * SHAKE is used by SLH-DSA-SHAKE signers (RFC 9814).
+ */
+static bool is_digest_allowed(int nid)
+{
+	switch (nid) {
+	case NID_sha256:
+	case NID_sha384:
+	case NID_sha512:
+#ifdef NID_sha3_256
+	case NID_sha3_256:
+	case NID_sha3_384:
+	case NID_sha3_512:
+	case NID_shake128:
+	case NID_shake256:
+#endif
+		return true;
+	default:
+		return false;
+	}
+}
+
+static int check_signer_digests(CMS_ContentInfo *cms)
+{
+	STACK_OF(CMS_SignerInfo) *infos = CMS_get0_SignerInfos(cms);
+	int i;
+
+	if (!infos || sk_CMS_SignerInfo_num(infos) <= 0)
+		return -EBADMSG;
+
+	for (i = 0; i < sk_CMS_SignerInfo_num(infos); ++i) {
+		CMS_SignerInfo *si = sk_CMS_SignerInfo_value(infos, i);
+		X509_ALGOR *digest = NULL;
+		int nid;
+
+		CMS_SignerInfo_get0_algs(si, NULL, NULL, &digest, NULL);
+		if (!digest)
+			return -EBADMSG;
+		nid = OBJ_obj2nid(digest->algorithm);
+		if (!is_digest_allowed(nid)) {
+			ERROR("digest algorithm %s of signer %d not allowed",
+			      OBJ_nid2sn(nid), i);
+			return -EBADMSG;
+		}
+	}
+
+	return 0;
+}
+
+#if defined(CONFIG_CMS_SKIP_UNKNOWN_SIGNERS) || defined(CONFIG_CMS_IGNORE_ADDITIONAL_CERTS)
+static int verify_signer_certs(CMS_ContentInfo* cms, X509_STORE* store)
+{
+	int i, valid_signers, needed_signers, ret = 1;
+	X509_STORE_CTX *ctx = X509_STORE_CTX_new();
+	STACK_OF(CMS_SignerInfo) *infos = CMS_get0_SignerInfos(cms);
+	STACK_OF(X509)* cms_certs = CMS_get1_certs(cms);
+
+	if (!ctx) {
+		ERROR("Failed to allocate verification context");
+		return ret;
+	}
+
+	if (infos == NULL || cms_certs == NULL) {
+		ERROR("Invalid CMS signed data payload");
+		return ret;
+	}
+
+#if defined(CONFIG_CMS_IGNORE_ADDITIONAL_CERTS)
+	/*
+	 * we want all signers need to be valid, but do not use any additionaly
+	 * certs from CMS signedData. This way we prevent adjacent intermediate certs
+	 * to our trusted cert chain from being used and only validate actual
+	 * signing certificates without using any additional certificates
+	 * besides the one in the trust store.
+	 */
+	needed_signers = sk_CMS_SignerInfo_num(infos);
+	cms_certs = NULL;
+#endif
+
+#if defined(CONFIG_CMS_SKIP_UNKNOWN_SIGNERS)
+	/* we only need a single valid signer */
+	needed_signers = 1;
+#endif
+
+	valid_signers = 0;
+	for (i = 0; i < sk_CMS_SignerInfo_num(infos); ++i) {
+		CMS_SignerInfo *si = sk_CMS_SignerInfo_value(infos, i);
+		X509 *signer = NULL;
+
+		CMS_SignerInfo_get0_algs(si, NULL, &signer, NULL, NULL);
+		if (!X509_STORE_CTX_init(ctx, store, signer, cms_certs)) {
+			ERROR("Failed to initialize signer verification operation");
+			break;
+		}
+
+		X509_STORE_CTX_set_default(ctx, "smime_sign");
+		if (X509_verify_cert(ctx) > 0) {
+			TRACE("Verified signature %d in signer sequence", i);
+			valid_signers++;
+		} else {
+			TRACE("Failed to verify certificate %d in signer sequence", i);
+		}
+
+		X509_STORE_CTX_cleanup(ctx);
+
+		if (valid_signers == needed_signers) {
+			ret = 0;
+			break;
+		}
+	}
+
+	X509_STORE_CTX_free(ctx);
+
+	return ret;
+}
+#endif
+
+static int openssl_cms_dgst_init(struct swupdate_cfg *sw, const char *keyfile)
+{
+	struct openssl_digest *dgst;
+	int ret;
+
+	/*
+	 * Check that it was not called before
+	 */
+	if (sw->dgst) {
+		return -EBUSY;
+	}
+
+	dgst = calloc(1, sizeof(*dgst));
+	if (!dgst) {
+		ret = -ENOMEM;
+		goto dgst_init_error;
+	}
+
+	/*
+	 * Load certificate chain
+	 */
+	dgst->certs = load_cert_chain(keyfile);
+	if (!dgst->certs) {
+		ERROR("Error loading certificate chain from %s", keyfile);
+		ret = -EINVAL;
+		goto dgst_init_error;
+	}
+
+	if (strlen(sw->crlfname)) {
+		TRACE("Loading CRL from %s", sw->crlfname);
+		if (!add_crl_to_store(dgst->certs, sw->crlfname,
+					      sw->crl_check_all)) {
+			ERROR("Error loading CRL from %s", sw->crlfname);
+			ret = -EINVAL;
+			goto dgst_init_error;
+		}
+	}
+
+#ifndef CONFIG_CMS_IGNORE_CERTIFICATE_PURPOSE
+	{
+		static char code_sign_name[] = "Code signing";
+		static char code_sign_sname[] = "codesign";
+
+		if (!X509_PURPOSE_add(X509_PURPOSE_CODE_SIGN, X509_TRUST_EMAIL,
+				0, check_code_sign, code_sign_name,
+				code_sign_sname, NULL)) {
+			ERROR("failed to add code sign purpose");
+			ret = -EINVAL;
+			goto dgst_init_error;
+		}
+	}
+
+	if (!X509_STORE_set_purpose(dgst->certs, get_x509_purpose(sw->cert_purpose))) {
+		ERROR("failed to set purpose");
+		ret = -EINVAL;
+		goto dgst_init_error;
+	}
+#endif
+
+	/*
+	 * Create context
+	 */
+	dgst->ctx = EVP_MD_CTX_create();
+	if(dgst->ctx == NULL) {
+		ERROR("EVP_MD_CTX_create failed, error 0x%lx", ERR_get_error());
+		ret = -ENOMEM;
+		goto dgst_init_error;
+	}
+
+	sw->dgst = dgst;
+
+	return 0;
+
+dgst_init_error:
+	if (dgst)
+		free(dgst);
+
+	return ret;
+}
+
+#if defined(CONFIG_CMS_REQUIRE_HYBRID_PQC)
+#if OPENSSL_VERSION_NUMBER < 0x30500000L
+#error "CONFIG_CMS_REQUIRE_HYBRID_PQC requires OpenSSL >= 3.5 (ML-DSA/SLH-DSA support)"
+#endif
+static bool is_pqc_signature_key(EVP_PKEY *pkey)
+{
+	const char *tn = pkey ? EVP_PKEY_get0_type_name(pkey) : NULL;
+
+	return tn && (strncmp(tn, "ML-DSA", 6) == 0 ||
+		      strncmp(tn, "SLH-DSA", 7) == 0);
+}
+
+/*
+ * The signers of a CMS SignedData sit in an unauthenticated SET OF SignerInfo,
+ * so an attacker can strip one and the rest still verify. Require at least one
+ * classic and one post-quantum signer so a dual-signed update cannot be
+ * downgraded to a single algorithm.
+ *
+ * This assumes every signer is trusted, i.e. CMS_verify() runs without
+ * CMS_NO_SIGNER_CERT_VERIFY (CONFIG_CMS_SKIP_UNKNOWN_SIGNERS unset).
+ */
+static int check_hybrid_signers(CMS_ContentInfo *cms)
+{
+	STACK_OF(CMS_SignerInfo) *sinfos = CMS_get0_SignerInfos(cms);
+	int i, classic = 0, pqc = 0;
+
+	for (i = 0; i < sk_CMS_SignerInfo_num(sinfos); ++i) {
+		CMS_SignerInfo *si = sk_CMS_SignerInfo_value(sinfos, i);
+		X509 *signer = NULL;
+
+		/* the signer cert has been resolved by the preceding CMS_verify() */
+		CMS_SignerInfo_get0_algs(si, NULL, &signer, NULL, NULL);
+		if (!signer)
+			continue;
+
+		if (is_pqc_signature_key(X509_get0_pubkey(signer)))
+			pqc++;
+		else
+			classic++;
+	}
+
+	if (classic < 1 || pqc < 1) {
+		ERROR("hybrid policy not satisfied: %d classic + %d post-quantum "
+		      "signer(s), require at least one of each", classic, pqc);
+		return -EBADMSG;
+	}
+
+	TRACE("hybrid policy OK: %d classic + %d post-quantum signer(s)",
+	      classic, pqc);
+	return 0;
+}
+#endif
+
+static int openssl_cms_verify_file(void  *ctx, const char *sigfile,
+		const char *file, const char *signer_name)
+{
+	int status = -EFAULT;
+	CMS_ContentInfo *cms = NULL;
+	BIO *content_bio = NULL;
+
+	struct openssl_digest *dgst = (struct openssl_digest *)ctx;
+
+	/* Open CMS blob that needs to be checked */
+	BIO *sigfile_bio = BIO_new_file(sigfile, "rb");
+	if (!sigfile_bio) {
+		ERROR("%s cannot be opened", sigfile);
+		status = -EBADF;
+		goto out;
+	}
+
+	/* Parse the DER-encoded CMS message */
+	cms = d2i_CMS_bio(sigfile_bio, NULL);
+	if (!cms) {
+		ERROR("%s cannot be parsed as DER-encoded CMS signature blob", sigfile);
+		status = -EFAULT;
+		goto out;
+	}
+
+	if (check_signer_digests(cms)) {
+		status = -EBADMSG;
+		goto out;
+	}
+
+	/* Open the content file (data which was signed) */
+	content_bio = BIO_new_file(file, "rb");
+	if (!content_bio) {
+		ERROR("%s cannot be opened", file);
+		status = -EBADF;
+		goto out;
+	}
+
+	/* Then try to verify signature */
+	if (!CMS_verify(cms, NULL, dgst->certs, content_bio,
+			NULL, CMS_BINARY | VERIFY_CMS_FLAGS)) {
+		ERR_print_errors_fp(stderr);
+		ERROR("Signature verification failed");
+		status = -EBADMSG;
+		goto out;
+	}
+
+	/* check signer name _after_ signature is verified */
+	if (check_signer_name(cms, signer_name)) {
+		ERROR("failed to verify signer name");
+		status = -EFAULT;
+		goto out;
+	}
+
+#if defined(CONFIG_CMS_SKIP_UNKNOWN_SIGNERS) || defined(CONFIG_CMS_IGNORE_ADDITIONAL_CERTS)
+	if (verify_signer_certs(cms, dgst->certs)) {
+		ERROR("Authentication of all signatures failed");
+		status = -EBADMSG;
+		goto out;
+	}
+#endif
+
+#if defined(CONFIG_CMS_REQUIRE_HYBRID_PQC)
+	if (check_hybrid_signers(cms)) {
+		status = -EBADMSG;
+		goto out;
+	}
+#endif
+
+	TRACE("Verified OK");
+
+	/* Signature is valid */
+	status = 0;
+out:
+
+	if (cms) {
+		CMS_ContentInfo_free(cms);
+	}
+	if (content_bio) {
+		BIO_free(content_bio);
+	}
+	if (sigfile_bio) {
+		BIO_free(sigfile_bio);
+	}
+	return status;
+}
+
+__attribute__((constructor))
+static void openssl_dgst(void)
+{
+	libs.dgst_init = openssl_cms_dgst_init;
+	libs.verify_file = openssl_cms_verify_file;
+	(void)register_dgstlib(MODNAME, &libs);
+}

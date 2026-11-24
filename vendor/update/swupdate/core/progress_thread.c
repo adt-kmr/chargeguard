@@ -1,0 +1,525 @@
+/*
+ * (C) Copyright 2016
+ * Stefano Babic, stefano.babic@swupdate.org.
+ *
+ * SPDX-License-Identifier:     GPL-2.0-only
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/select.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
+
+#include "swupdate.h"
+#include <handler.h>
+#include "util.h"
+#include "pctl.h"
+#include "network_ipc.h"
+#include "network_utils.h"
+#include <progress.h>
+#include "generated/autoconf.h"
+
+#ifdef CONFIG_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
+/*
+ * Collect errors during an update session
+ */
+struct update_error {
+	SIMPLEQ_ENTRY(update_error) next;
+	char *strerr;
+};
+
+SIMPLEQ_HEAD(errors_list, update_error);
+
+/*
+ * Structure contains data regarding
+ * current installation
+ */
+struct swupdate_progress {
+	struct progress_msg msg;
+	char *current_image;
+	const handler *curhnd;
+	struct pollfd *conns; /* [0] is the listening socket, then the clients */
+	unsigned int nconns;
+	struct errors_list errs;
+	/* no logging while held, an ERROR() locks it via the progress notifier */
+	pthread_mutex_t lock;
+	bool step_running;
+};
+/*
+ * Statically initialized: errors can be stored (via ERROR()) before
+ * progress_bar_thread() runs, e.g. while parsing the configuration file.
+ */
+static struct swupdate_progress progress = {
+	.errs = SIMPLEQ_HEAD_INITIALIZER(progress.errs),
+	.lock = PTHREAD_MUTEX_INITIALIZER,
+};
+
+/*
+ * This must be called after acquiring the mutex
+ * for the progress structure
+ */
+static void clean_errlist(void) {
+	struct update_error *err;
+	struct update_error *err_tmp;
+	SIMPLEQ_FOREACH_SAFE(err, &progress.errs, next, err_tmp) {
+		free(err->strerr);
+		SIMPLEQ_REMOVE(&progress.errs, err, update_error, next);
+		free(err);
+	}
+}
+
+/*
+ * This must be called after acquiring the mutex
+ * for the progress structure
+ */
+static void insert_errmsg(const char *msg) {
+	struct update_error *err = (struct update_error *)calloc(1, sizeof(*err));
+
+	/*
+	 * in case of error, silent quit. OOM will be raised
+	 * during update and avoid circular dependencies
+	 */
+	if (!err)
+		return;
+
+	err->strerr = strdup(msg);
+	if (!err->strerr) {
+		free(err);
+		return;
+	}
+
+	SIMPLEQ_INSERT_TAIL(&progress.errs, err, next);
+}
+
+/*
+ * This must be called after acquiring the mutex
+ * for the progress structure
+ */
+static void create_json_with_errors(void)
+{
+	struct swupdate_progress *pprog = &progress;
+	struct update_error *err;
+	struct update_error *err_tmp;
+	unsigned int len = 0;
+	unsigned int available = sizeof(pprog->msg.info) - strlen("[]");
+	bool first = true;
+	char *buf = pprog->msg.info;
+
+	SIMPLEQ_FOREACH_SAFE(err, &progress.errs, next, err_tmp) {
+		/*
+		 * Do not truncate in the buffer, check in advance if string
+		 * can be copied
+		 */
+
+		if (err->strerr && (available - strlen(err->strerr) - 3) > 0) {
+			const char *format;
+			if (first) {
+				format = "{ \"errors\": [\"%s\"";
+				first = false;
+			} else
+				format = ",\"%s\"";
+
+			len = snprintf(buf, available -3, format, err->strerr);
+			available -= len;
+			buf += len;
+		}
+	}
+	*buf++ = ']';
+	*buf++ = '}';
+	*buf++ = '\0';
+	pprog->msg.infolen = strlen(pprog->msg.info);
+}
+
+/*
+ * This must be called after acquiring the mutex
+ * for the progress structure
+ */
+static int progress_add_conn(struct swupdate_progress *pprog, int fd, short events)
+{
+	struct pollfd *tmp = realloc(pprog->conns, (pprog->nconns + 1) * sizeof(*tmp));
+	if (!tmp)
+		return -ENOMEM;
+	tmp[pprog->nconns].fd = fd;
+	tmp[pprog->nconns].events = events;
+	tmp[pprog->nconns].revents = 0;
+	pprog->nconns++;
+	pprog->conns = tmp;
+	return 0;
+}
+
+/*
+ * This must be called after acquiring the mutex
+ * for the progress structure
+ * It is assumed that the listeners are reading
+ * the events and consume the messages. To avoid deadlocks,
+ * SWUpdate will try to send the message without blocking,
+ * and if send() returns EWOULDBLOCk, tries some times again
+ * with a 1 second delay.
+ * This is because SWUpdate could send a lot of events,
+ * and listeners cannot be scheduled at time. The delay just
+ * slow down the update when happens. If the message cannot be
+ * sent after retries, SWUpdate will consider the listener
+ * dead and shuts down its socket.
+ */
+static void send_progress_msg(void)
+{
+	struct swupdate_progress *pprog = &progress;
+	unsigned int client;
+	void *buf;
+	size_t count;
+	ssize_t n;
+	bool tryagain;
+	const int maxAttempts = 5;
+
+	pprog->msg.apiversion = PROGRESS_API_VERSION;
+	for (client = 1; client < pprog->nconns; client++) {
+		int fd = pprog->conns[client].fd;
+
+		buf = &pprog->msg;
+		count = sizeof(pprog->msg);
+		errno = 0;
+		pprog->msg.source = get_install_source();
+		while (count > 0) {
+			int attempt = 0;
+			do {
+				n = send(fd, buf, count, MSG_NOSIGNAL | MSG_DONTWAIT);
+				attempt++;
+				tryagain = n <= 0 && (errno == EWOULDBLOCK || errno == EAGAIN);
+				if (tryagain)
+					sleep(1);
+			} while (tryagain && attempt < maxAttempts);
+			if (n <= 0) {
+				/* The progress thread is woken up by this and drops it */
+				shutdown(fd, SHUT_RDWR);
+				break;
+			}
+			count -= (size_t)n;
+			buf = (char*)buf + n;
+		}
+	}
+}
+
+static void _swupdate_download_update(unsigned int perc, unsigned long long totalbytes)
+{
+	/*
+	 * TODO: totalbytes should be forwarded correctly
+	 * after adding it to the progress message
+	 */
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	if (perc != pprog->msg.dwl_percent) {
+		pprog->msg.status = DOWNLOAD;
+		pprog->msg.dwl_percent = perc;
+		pprog->msg.dwl_bytes = totalbytes;
+		send_progress_msg();
+	}
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_init(unsigned int nsteps) {
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+
+	pprog->msg.apiversion = PROGRESS_API_VERSION;
+	pprog->msg.nsteps = nsteps;
+	pprog->msg.cur_step = 0;
+	pprog->msg.status = START;
+	pprog->msg.cur_percent = 0;
+	pprog->msg.infolen = get_install_info(pprog->msg.info,
+						sizeof(pprog->msg.info));
+	pprog->msg.source = get_install_source();
+	clean_errlist();
+	send_progress_msg();
+	/* Info is just an event, reset it after sending */
+	pprog->msg.infolen = 0;
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_addstep(void) {
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	pprog->msg.nsteps++;
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_update(unsigned int perc)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	if (perc != pprog->msg.cur_percent && pprog->step_running) {
+		pprog->msg.status = PROGRESS;
+		pprog->msg.cur_percent = perc;
+		send_progress_msg();
+	}
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_store_err(const char *error_msg)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	insert_errmsg(error_msg);
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_download_update(unsigned int perc, unsigned long long totalbytes)
+{
+	char	info[PRINFOSIZE];   		/* info */
+
+	/*
+	 * Not called by main process, for example by suricatta or Webserver
+	 */
+	if (pid == getpid()) {
+		/*
+		 * Notify can just receive a string as message
+		 * so it is necessary to encode further information as string
+		 * and decode them in the notifier, in this case
+		 * the progress_notifier
+		 */
+		snprintf(info, sizeof(info) - 1, "%d-%llu", perc, totalbytes);
+		notify(PROGRESS, RECOVERY_DWL, TRACELEVEL, info);
+		return;
+	}
+
+	/* Called by main process, emit a progress message */
+	_swupdate_download_update(perc, totalbytes);
+}
+
+void swupdate_progress_inc_step(const char *image, const char *handler_name)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	pprog->msg.cur_step++;
+	pprog->msg.cur_percent = 0;
+	strlcpy(pprog->msg.cur_image, image, sizeof(pprog->msg.cur_image));
+	strlcpy(pprog->msg.hnd_name, handler_name, sizeof(pprog->msg.hnd_name));
+	pprog->step_running = true;
+	pprog->msg.status = RUN;
+	send_progress_msg();
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_step_completed(void)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	pprog->step_running = false;
+	pprog->msg.status = IDLE;
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_end(RECOVERY_STATUS status)
+{
+	struct swupdate_progress *pprog = &progress;
+
+	pthread_mutex_lock(&pprog->lock);
+	pprog->step_running = false;
+	pprog->msg.status = status;
+
+	if (status == FAILURE)
+		create_json_with_errors();
+
+	send_progress_msg();
+	pprog->msg.nsteps = 0;
+	pprog->msg.cur_step = 0;
+	pprog->msg.cur_percent = 0;
+	pprog->msg.dwl_percent = 0;
+	pprog->msg.dwl_bytes = 0;
+
+	clean_errlist();
+
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_info(RECOVERY_STATUS status, int cause, const char *info)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	snprintf(pprog->msg.info, sizeof(pprog->msg.info), "{\"%d\": %s}",
+			cause, info);
+	pprog->msg.infolen = strlen(pprog->msg.info);
+	pprog->msg.status = status;
+	send_progress_msg();
+	/* Info is just an event, reset it after sending */
+	pprog->msg.infolen = 0;
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+void swupdate_progress_done(const char *info)
+{
+	struct swupdate_progress *pprog = &progress;
+	pthread_mutex_lock(&pprog->lock);
+	if (info != NULL) {
+		snprintf(pprog->msg.info, sizeof(pprog->msg.info), "%s", info);
+		pprog->msg.infolen = strlen(pprog->msg.info);
+	}
+	pprog->step_running = false;
+	pprog->msg.status = DONE;
+	send_progress_msg();
+	pprog->msg.infolen = 0;
+	pthread_mutex_unlock(&pprog->lock);
+}
+
+static int progress_send_connect_ack(int connfd)
+{
+	ssize_t n;
+	size_t remaining_bytes;
+	int ret = 0; /* 0==success */
+	void *buf;
+	struct progress_connect_ack ack;
+	memset(&ack, 0, sizeof(ack));
+	ack.apiversion = PROGRESS_API_VERSION;
+	strncpy(ack.magic, PROGRESS_CONNECT_ACK_MAGIC, strlen(PROGRESS_CONNECT_ACK_MAGIC));
+
+	remaining_bytes = sizeof(ack);
+	buf = &ack;
+	while (remaining_bytes > 0) {
+		n = send(connfd, buf, remaining_bytes, MSG_NOSIGNAL);
+		if (n < 0) {
+			if (EINTR == errno)
+				continue;
+			/* The caller logs it, this runs with the lock held */
+			ret = -errno;
+			break;
+		} else if (0 == n) {
+			/* Should not happen */
+			ret = -EIO;
+			break;
+		}
+		remaining_bytes -= (size_t)n;
+		buf = (char*)buf + n;
+	}
+
+	return ret;
+}
+
+/*
+ * conns[0] is the listening socket, so nconns is one more than the clients
+ */
+static bool progress_limit_reached(struct swupdate_progress *pprog, struct swupdate_cfg *cfg)
+{
+	return cfg->progress_max_clients > 0 &&
+	       pprog->nconns > (unsigned int)cfg->progress_max_clients;
+}
+
+/*
+ * Only this thread modifies the conns array or closes a client socket
+ */
+void *progress_bar_thread (void __attribute__ ((__unused__)) *data)
+{
+	int listen, connfd;
+	socklen_t clilen;
+	struct sockaddr_un cliaddr;
+	struct swupdate_progress *pprog = &progress;
+	struct swupdate_cfg *cfg = get_swupdate_cfg();
+	unsigned int client;
+	int err;
+
+	/* Initialize and bind to UDS */
+	listen = listener_create(get_prog_socket(), SOCK_STREAM,
+				 cfg->progress_socket_mode, cfg->progress_socket_gid);
+	if (listen < 0 ) {
+		ERROR("Error creating IPC socket %s, exiting.", get_prog_socket());
+		exit(2);
+	}
+
+	pthread_mutex_lock(&pprog->lock);
+	err = progress_add_conn(pprog, listen, POLLIN);
+	pthread_mutex_unlock(&pprog->lock);
+	if (err) {
+		ERROR("Out of memory, exiting.");
+		exit(2);
+	}
+
+	thread_ready();
+	do {
+		/* Wait until a client connects or closes its socket */
+		if (poll(pprog->conns, pprog->nconns, -1) < 0) {
+			int serrno = errno;
+			if (serrno == EINTR)
+				continue;
+			TRACE("Poll returns: %s", strerror(serrno));
+			/* Out of resources, give the system time instead of spinning */
+			if (serrno == ENOMEM)
+				sleep(1);
+			continue;
+		}
+
+		/*
+		 * Drop the clients that closed their socket. A client that only
+		 * shut down its write half is kept. Walk backwards, as dropping
+		 * moves the last entry into the hole.
+		 */
+		pthread_mutex_lock(&pprog->lock);
+		for (client = pprog->nconns - 1; client >= 1; client--) {
+			if (pprog->conns[client].revents) {
+				close(pprog->conns[client].fd);
+				pprog->conns[client] = pprog->conns[--pprog->nconns];
+			}
+		}
+		pthread_mutex_unlock(&pprog->lock);
+
+		/* No new connection, continue polling */
+		if (!(pprog->conns[0].revents & POLLIN))
+			continue;
+
+		clilen = sizeof(cliaddr);
+		if ( (connfd = accept(listen, (struct sockaddr *) &cliaddr, &clilen)) < 0) {
+			if (errno == EINTR)
+				continue;
+			else {
+				int serrno = errno;
+				TRACE("Accept returns: %s", strerror(serrno));
+				/* Out of resources, give the system time instead of spinning */
+				if (serrno == EMFILE || serrno == ENFILE || serrno == ENOBUFS || serrno == ENOMEM)
+					sleep(1);
+				continue;
+			}
+		}
+
+		if (fcntl(connfd, F_SETFD, FD_CLOEXEC) < 0)
+			WARN("Could not set %d as cloexec: %s", connfd, strerror(errno));
+
+		/* Limit exceeded, already warned when it was reached */
+		if (progress_limit_reached(pprog, cfg)) {
+			close(connfd);
+			continue;
+		}
+
+		/*
+		 * Send an ACK to the client to indicate that it is duly registered,
+		 * then add it without events: only POLLHUP and POLLERR are reported
+		 */
+		pthread_mutex_lock(&pprog->lock);
+		err = progress_send_connect_ack(connfd);
+		if (!err)
+			err = progress_add_conn(pprog, connfd, 0);
+		pthread_mutex_unlock(&pprog->lock);
+		if (err) {
+			/* A client that closed before the ACK is not an error */
+			if (err == -EPIPE || err == -ECONNRESET)
+				TRACE("Progress client closed before the ACK");
+			else
+				ERROR("Could not register progress client: %s", strerror(-err));
+			close(connfd);
+		} else if (progress_limit_reached(pprog, cfg)) {
+			WARN("Progress client limit of %d reached", cfg->progress_max_clients);
+		}
+	} while(1);
+}

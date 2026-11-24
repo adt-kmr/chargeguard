@@ -1,0 +1,71 @@
+/*
+ * (C) Copyright 2016
+ * Stefano Babic <stefano.babic@swupdate.org>
+ *
+ * SPDX-License-Identifier:     GPL-2.0-only
+ */
+
+/*
+ * this file just contains the required structures to extract
+ * files from a cpio archive. It does not have all structures
+ * but just what is needed by swupdate
+ */
+
+#pragma once
+
+/* Global swupdate defines */
+#include <stdbool.h>
+#include <sys/types.h>
+#include "globals.h"
+#include <stdint.h>
+
+/*
+ * cpio header - swupdate does not
+ * support images generated with ancient cpio.
+ * Just the new format as described in cpio
+ * documentation is supported.
+ */
+
+#define CPIO_NEWASCII 070701
+#define CPIO_CRCASCII 070702
+/*
+ * SWUpdate extension of the New CRC format for files of 4 GiB and more:
+ * c_rdev_maj, unused for regular files, has the upper 32 bits of the size.
+ * 070703 is not used: it is the "newcx" format proposed for initramfs.
+ */
+#define CPIO_CRCASCII_LARGE 070704
+
+#define NPAD_BYTES(o) ((4 - (o % 4)) % 4)
+
+struct new_ascii_header
+{
+  char c_magic[6];
+  char c_ino[8];
+  char c_mode[8];
+  char c_uid[8];
+  char c_gid[8];
+  char c_nlink[8];
+  char c_mtime[8];
+  char c_filesize[8];
+  char c_dev_maj[8];
+  char c_dev_min[8];
+  char c_rdev_maj[8];
+  char c_rdev_min[8];
+  char c_namesize[8];
+  char c_chksum[8];
+};
+
+struct filehdr {
+	unsigned long format;
+	uint64_t size;
+	unsigned long namesize;
+	unsigned long chksum;
+	char filename[MAX_IMAGE_FNAME];
+};
+
+int get_cpiohdr(unsigned char *buf, struct filehdr *fhdr);
+int extract_cpio_header(int fd, struct filehdr *fhdr, uint64_t *offset);
+int extract_img_from_cpio(int fd, uint64_t offset, struct filehdr *fdh);
+void extract_padding(int fd);
+bool swupdate_verify_chksum(const uint32_t chk1, struct filehdr *fhdr);
+int fill_buffer(int fd, unsigned char *buf, unsigned int nbytes);

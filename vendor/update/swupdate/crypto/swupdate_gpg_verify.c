@@ -1,0 +1,258 @@
+/*
+ * Author: Amy Fong
+ * Copyright (C) 2023, Siemens AG
+ *
+ * SPDX-License-Identifier:     GPL-2.0-only
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include "swupdate.h"
+#include "util.h"
+
+#include <errno.h>
+#include <locale.h>
+#include <gpgme.h>
+#include "swupdate_crypto.h"
+#include "swupdate_gpg.h"
+
+static swupdate_dgst_lib	libs;
+
+static gpg_error_t
+status_cb(void *opaque, const char *keyword, const char *value)
+{
+	(void)opaque;
+	DEBUG("status_cb: %s %s", keyword, value);
+	return 0;
+}
+
+#define MSGBUF_LEN 256
+
+static bool sig_is_acceptable(gpgme_signature_t sig, gpgme_protocol_t protocol)
+{
+	if (sig->status != GPG_ERR_NO_ERROR) {
+		TRACE("gpg: signature %s rejected: %s", sig->fpr,
+		      gpgme_strerror(sig->status));
+		return false;
+	}
+
+	if (sig->summary & GPGME_SIGSUM_RED) {
+		TRACE("gpg: signature %s rejected: summary 0x%x",
+		      sig->fpr, sig->summary);
+		return false;
+	}
+
+	/*
+	 * gpgsm reports a good status for a signature whose certificate
+	 * chain does not end at a trusted root, e.g. a self-signed
+	 * certificate embedded in the signature itself. Only the validity
+	 * tells the two apart.
+	 */
+	if (protocol == GPGME_PROTOCOL_CMS &&
+	    sig->validity < GPGME_VALIDITY_FULL) {
+		TRACE("gpg: signature %s rejected: certificate not trusted (%s)",
+		      sig->fpr, gpgme_strerror(sig->validity_reason));
+		return false;
+	}
+
+	return true;
+}
+
+static int gpg_dgst_init(struct swupdate_cfg *sw, __attribute__ ((__unused__)) const char *keyfile)
+{
+	struct gpg_digest *dgst;
+	int ret;
+
+	/*
+	 * Check that it was not called before
+	 */
+	if (sw->dgst) {
+		return -EBUSY;
+	}
+
+	dgst = calloc(1, sizeof(*dgst));
+	if (!dgst) {
+		ret = -ENOMEM;
+		goto dgst_init_error;
+	}
+
+	dgst->gpg_home_directory = sw->gpg_home_directory;
+	dgst->gpgme_protocol = sw->gpgme_protocol;
+	dgst->verbose = sw->verbose;
+
+	sw->dgst = dgst;
+
+	return 0;
+
+dgst_init_error:
+	if (dgst)
+		free(dgst);
+
+	return ret;
+}
+
+static int gpg_verify_file(void *gpgdgst, const char *sigfile,
+                const char *file, const char *signer_name)
+{
+	struct gpg_digest *dgst = (struct gpg_digest *)gpgdgst;
+	gpgme_ctx_t ctx = NULL;
+	gpgme_error_t err;
+	gpgme_data_t image_sig = NULL, image = NULL;
+	FILE *fp_sig = NULL;
+	FILE *fp = NULL;
+	gpgme_signature_t sig;
+	int status = 0;
+	gpgme_protocol_t protocol;
+	gpgme_verify_result_t result;
+	char msg[MSGBUF_LEN];
+	int r;
+	const char *tmp;
+
+	/*
+	 * The GPG backend does not check the signer name and accepts
+	 * any key in the keyring: report it instead of silently
+	 * ignoring the configuration.
+	 */
+	if (signer_name && signer_name[0] != '\0')
+		WARN("forced-signer-name '%s' is not supported with GPG and ignored",
+		     signer_name);
+
+	tmp = gpgme_check_version(NULL);
+	if (tmp == NULL) {
+		ERROR("Failed to check gpgme library version");
+		status = -EFAULT;
+		goto out;
+	}
+
+	err = gpgme_new(&ctx);
+	if (err) {
+		ERROR("Failed to create new gpg context");
+		r = gpgme_strerror_r(err, msg, MSGBUF_LEN);
+		if (r == 0) {
+			ERROR("Reason: %s", msg);
+		}
+		status = -EFAULT;
+		goto out;
+	}
+
+	if (dgst->gpgme_protocol != NULL) {
+		DEBUG("gpg: Enabling protocol %s", dgst->gpgme_protocol);
+		if (!strcmp(dgst->gpgme_protocol, "openpgp")) {
+			TRACE("gpg: using protocol OpenPGP");
+			protocol = GPGME_PROTOCOL_OpenPGP;
+		} else if (!strcmp(dgst->gpgme_protocol, "cms")) {
+			TRACE("gpg: using protocol cms");
+			protocol = GPGME_PROTOCOL_CMS;
+		} else {
+			ERROR("gpg: unsupported protocol! %s", dgst->gpgme_protocol);
+			status = -EFAULT;
+			goto out;
+		}
+	} else {
+		ERROR("gpg protocol unspecified!");
+		status = -EFAULT;
+		goto out;
+	}
+
+	gpgme_set_protocol(ctx, protocol);
+	gpgme_set_status_cb(ctx, status_cb, NULL);
+	if (dgst->verbose) {
+		gpgme_set_ctx_flag(ctx, "full-status", "1");
+	}
+	gpgme_set_locale(ctx, LC_ALL, setlocale(LC_ALL, ""));
+
+	if (dgst->gpg_home_directory != NULL) {
+		err = gpgme_ctx_set_engine_info(ctx, protocol, NULL, dgst->gpg_home_directory);
+		if (err) {
+			ERROR("Something went wrong while setting the engine info");
+			r = gpgme_strerror_r(err, msg, MSGBUF_LEN);
+			if (r == 0) {
+				ERROR("Reason: %s", msg);
+			}
+			status = -EFAULT;
+			goto out;
+		}
+	}
+
+	fp_sig = fopen(sigfile, "rb");
+	if (!fp_sig) {
+		ERROR("Failed to open %s", sigfile);
+		status = -EBADF;
+		goto out;
+	}
+	err = gpgme_data_new_from_stream(&image_sig, fp_sig);
+	if (err) {
+		ERROR("error allocating data object");
+		r = gpgme_strerror_r(err, msg, MSGBUF_LEN);
+		if (r == 0) {
+			ERROR("Reason: %s", msg);
+		}
+		status = -ENOMEM;
+		goto out;
+	}
+
+	fp = fopen(file, "rb");
+	if (!fp) {
+		ERROR("Failed to open %s", file);
+		status = -EBADF;
+		goto out;
+	}
+	err = gpgme_data_new_from_stream(&image, fp);
+	if (err) {
+		ERROR("error allocating data object");
+		r = gpgme_strerror_r(err, msg, MSGBUF_LEN);
+		if (r == 0) {
+			ERROR("Reason: %s", msg);
+		}
+		status = -ENOMEM;
+		goto out;
+	}
+
+	err = gpgme_op_verify(ctx, image_sig, image, NULL);
+	result = gpgme_op_verify_result(ctx);
+	if (err) {
+		ERROR("verify failed");
+		r = gpgme_strerror_r(err, msg, MSGBUF_LEN);
+		if (r == 0) {
+			ERROR("Reason: %s", msg);
+		}
+		status = -EBADMSG;
+		goto out;
+	}
+
+	if (result) {
+		for (sig = result->signatures; sig; sig = sig->next) {
+			if (sig_is_acceptable(sig, protocol)) {
+				TRACE("Verified OK");
+				status = 0;
+				goto out;
+			}
+		}
+	}
+	TRACE("Verification failed");
+	status = -EBADMSG;
+
+ out:
+	if (image)
+		gpgme_data_release(image);
+	if (image_sig)
+		gpgme_data_release(image_sig);
+	if (ctx)
+		gpgme_release(ctx);
+
+	if (fp)
+		fclose(fp);
+	if (fp_sig)
+		fclose(fp_sig);
+
+	return status;
+}
+
+__attribute__((constructor))
+static void gpg_dgst(void)
+{
+	libs.dgst_init = gpg_dgst_init;
+	libs.verify_file = gpg_verify_file;
+	(void)register_dgstlib("GPG", &libs);
+}

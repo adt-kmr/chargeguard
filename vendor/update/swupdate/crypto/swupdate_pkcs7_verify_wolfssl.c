@@ -1,0 +1,342 @@
+/*
+ * (C) Copyright 2019
+ * Stefano Babic, stefano.babic@swupdate.org.
+ * (C) Copyright 2023
+ * Bastian Germann
+ *
+ * SPDX-License-Identifier:     GPL-2.0-only
+ *
+ * Code mostly taken from openssl examples
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <errno.h>
+#include <limits.h>
+#include "swupdate.h"
+#include "swupdate_wolfssl.h"
+#include "util.h"
+#include "swupdate_crypto.h"
+#include <wolfssl/openssl/pkcs7.h>
+#include <wolfssl/wolfcrypt/asn.h>
+
+#ifndef PKCS7_BINARY
+#define PKCS7_BINARY            0x80
+#endif
+
+static swupdate_dgst_lib	libs;
+
+static int store_verify_callback(int ok, X509_STORE_CTX *ctx) {
+	int cert_error = X509_STORE_CTX_get_error(ctx);
+
+	if (!ok) {
+		switch (cert_error) {
+#if defined(CONFIG_CMS_IGNORE_EXPIRED_CERTIFICATE)
+		case X509_V_ERR_CERT_HAS_EXPIRED:
+		case X509_V_ERR_CERT_NOT_YET_VALID:
+			ok = 1;
+			break;
+#endif
+#if defined(CONFIG_CMS_IGNORE_CERTIFICATE_PURPOSE)
+		case X509_V_ERR_INVALID_PURPOSE:
+			ok = 1;
+			break;
+#endif
+		default:
+			break;
+		}
+	}
+
+	return ok;
+}
+
+static X509_STORE *load_cert_chain(const char *file)
+{
+	X509_STORE *castore = X509_STORE_new();
+	if (!castore) {
+		return NULL;
+	}
+
+	/*
+	 * Set error callback function for verification of CRTs and CRLs in order
+	 * to ignore some errors depending on configuration
+	 */
+	X509_STORE_set_verify_cb(castore, store_verify_callback);
+
+	BIO *castore_bio = BIO_new_file(file, "r");
+	if (!castore_bio) {
+		TRACE("failed: BIO_new_file(%s)", file);
+		return NULL;
+	}
+
+	int crt_count = 0;
+	X509 *crt = NULL;
+	do {
+		crt = PEM_read_bio_X509(castore_bio, NULL, 0, NULL);
+		if (crt) {
+			crt_count++;
+			char *subj = X509_NAME_oneline(X509_get_subject_name(crt), NULL, 0);
+			char *issuer = X509_NAME_oneline(X509_get_issuer_name(crt), NULL, 0);
+			TRACE("Read PEM #%d: %s %s", crt_count, issuer, subj);
+			free(subj);
+			free(issuer);
+			if (X509_STORE_add_cert(castore, crt) == 0) {
+				TRACE("Adding certificate to X509_STORE failed");
+				BIO_free(castore_bio);
+				X509_STORE_free(castore);
+				return NULL;
+			}
+		}
+	} while (crt);
+	BIO_free(castore_bio);
+
+	if (crt_count == 0) {
+		X509_STORE_free(castore);
+		return NULL;
+	}
+
+	return castore;
+}
+
+static inline int next_common_name(X509_NAME *subject, int i)
+{
+	return X509_NAME_get_index_by_NID(subject, NID_commonName, i);
+}
+
+static int check_common_name(X509_NAME *subject, const char *name)
+{
+	int i = -1, ret = 1;
+
+	while ((i = next_common_name(subject, i)) > -1) {
+		X509_NAME_ENTRY *e = X509_NAME_get_entry(subject, i);
+		ASN1_STRING *d = X509_NAME_ENTRY_get_data(e);
+		unsigned char *cn = NULL;
+		size_t len = strlen(name);
+		bool matches = (ASN1_STRING_to_UTF8(&cn, d) == (int)len)
+				&& (strncmp(name, (const char *)cn, len) == 0);
+
+		OPENSSL_free(cn);
+		if (!matches) {
+			char *subj = X509_NAME_oneline(subject, NULL, 0);
+
+			ERROR("common name of '%s' does not match expected '%s'",
+				subj, name);
+			OPENSSL_free(subj);
+			return 2;
+		} else {
+			ret = 0;
+		}
+	}
+
+	if (ret == 0) {
+		char *subj = X509_NAME_oneline(subject, NULL, 0);
+
+		TRACE("verified signer cert: %s", subj);
+		OPENSSL_free(subj);
+	}
+
+	return ret;
+}
+
+static int check_signer_name(WOLFSSL_PKCS7 *pkcs7, const char *name)
+{
+	if ((name == NULL) || (name[0] == '\0'))
+		return 0;
+
+	const unsigned char *cert;
+	X509 *crt;
+	int ret;
+
+	if ((pkcs7->pkcs7.verifyCert == NULL) ||
+			(pkcs7->pkcs7.verifyCertSz == 0)) {
+		ERROR("failed to access signer certificate for common name check");
+		return 1;
+	}
+
+	cert = pkcs7->pkcs7.verifyCert;
+	crt = d2i_X509(NULL, &cert, pkcs7->pkcs7.verifyCertSz);
+	if (crt == NULL) {
+		ERROR("failed to decode signer certificate for common name check");
+		return 1;
+	}
+
+	ret = check_common_name(X509_get_subject_name(crt), name);
+	X509_free(crt);
+
+	return ret;
+}
+
+static int wolfssl_pkcs7_dgst_init(struct swupdate_cfg *sw, const char *keyfile)
+{
+	struct wolfssl_digest *dgst;
+	int ret;
+
+	/*
+	 * Check that it was not called before
+	 */
+	if (sw->dgst) {
+		return -EBUSY;
+	}
+
+	dgst = calloc(1, sizeof(*dgst));
+	if (!dgst) {
+		ret = -ENOMEM;
+		goto dgst_init_error;
+	}
+
+	/*
+	 * Load certificate chain
+	 */
+	dgst->certs = load_cert_chain(keyfile);
+	if (!dgst->certs) {
+		ERROR("Error loading certificate chain from %s", keyfile);
+		ret = -EINVAL;
+		goto dgst_init_error;
+	}
+
+	/*
+	 * Create context
+	 */
+	dgst->ctx = EVP_MD_CTX_create();
+	if(dgst->ctx == NULL) {
+		ERROR("EVP_MD_CTX_create failed, error 0x%lx", ERR_get_error());
+		ret = -ENOMEM;
+		goto dgst_init_error;
+	}
+
+	sw->dgst = dgst;
+
+	return 0;
+
+dgst_init_error:
+	if (dgst)
+		free(dgst);
+
+	return ret;
+}
+
+/*
+ * The digest algorithm is chosen by the signer: accept only
+ * algorithms that are not considered weak (no MD5, SHA-1, SHA-224).
+ */
+static bool is_digest_allowed(int hash_oid)
+{
+	switch (hash_oid) {
+	case SHA256h:
+	case SHA384h:
+	case SHA512h:
+	case SHA3_256h:
+	case SHA3_384h:
+	case SHA3_512h:
+	case SHAKE128h:
+	case SHAKE256h:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static int wolfssl_pkcs7_verify_file(void *ctx, const char *sigfile,
+		const char *file, const char *signer_name)
+{
+	struct wolfssl_digest *dgst = (struct wolfssl_digest *)ctx;
+	int status = -EFAULT;
+	WOLFSSL_PKCS7 *pkcs7 = NULL;
+	BIO *bio_mem = NULL;
+	unsigned char *sigbuf = NULL;
+	unsigned char *content = NULL;
+	size_t sigbuf_len = 0;
+	size_t content_len = 0;
+	int ret;
+
+	pkcs7 = (WOLFSSL_PKCS7 *)PKCS7_new();
+	if (!pkcs7) {
+		ERROR("Cannot allocate PKCS#7 structure");
+		status = -ENOMEM;
+		goto out;
+	}
+
+	/* Read detached signature that needs to be checked */
+	ret = read_file_into_buf(sigfile, &sigbuf, &sigbuf_len);
+	if (ret) {
+		status = ret;
+		goto out;
+	}
+	if (sigbuf_len == 0 || sigbuf_len > INT_MAX) {
+		ERROR("%s cannot be parsed as DER-encoded PKCS#7 signature blob", sigfile);
+		status = -EFAULT;
+		goto out;
+	}
+	/* pkcs7 owns the buffer, it is freed by PKCS7_free() */
+	pkcs7->data = sigbuf;
+	pkcs7->len = (int)sigbuf_len;
+	sigbuf = NULL;
+
+	/* Read the content file (data which was signed) */
+	ret = read_file_into_buf(file, &content, &content_len);
+	if (ret) {
+		status = ret;
+		goto out;
+	}
+	if (content_len > INT_MAX) {
+		ERROR("%s is too big", file);
+		status = -EFBIG;
+		goto out;
+	}
+
+	/* Then try to verify signature. The BIO* in parameter has to be a mem BIO.
+           See https://github.com/wolfSSL/wolfssl/issues/6174. */
+	bio_mem = BIO_new_mem_buf(content, (int)content_len);
+	if (!bio_mem) {
+		ERROR("Cannot allocate memory BIO for %s", file);
+		status = -ENOMEM;
+		goto out;
+	}
+
+	if (!PKCS7_verify((PKCS7 *)pkcs7, NULL, dgst->certs, bio_mem,
+			NULL, PKCS7_BINARY)) {
+		ERR_print_errors_fp(stderr);
+		ERROR("Signature verification failed");
+		status = -EBADMSG;
+		goto out;
+	}
+
+	/* the digest algorithm of the signer is set by PKCS7_verify() */
+	if (!is_digest_allowed(pkcs7->pkcs7.hashOID)) {
+		ERROR("digest algorithm (OID sum %d) not allowed", pkcs7->pkcs7.hashOID);
+		status = -EBADMSG;
+		goto out;
+	}
+
+	if (check_signer_name(pkcs7, signer_name)) {
+		ERROR("failed to verify signer name");
+		status = -EFAULT;
+		goto out;
+	}
+
+	TRACE("Verified OK");
+
+	/* Signature is valid */
+	status = 0;
+out:
+
+	if (pkcs7) {
+		PKCS7_free((PKCS7 *)pkcs7);
+	}
+	if (bio_mem) {
+		BIO_free(bio_mem);
+	}
+	free(content);
+	free(sigbuf);
+	return status;
+}
+
+__attribute__((constructor))
+static void wolfssl_dgst(void)
+{
+	libs.dgst_init = wolfssl_pkcs7_dgst_init;
+	libs.verify_file = wolfssl_pkcs7_verify_file;
+	(void)register_dgstlib("pkcs#7WolfSSL", &libs);
+}

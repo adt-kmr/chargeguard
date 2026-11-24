@@ -1,0 +1,155 @@
+# SPDX-FileCopyrightText: 2024 Stefano Babic <stefano.babic@swupdate.org>
+#
+# SPDX-License-Identifier: GPL-2.0-only
+
+menu "Crypto libraries"
+	config SSL_IMPL_OPENSSL
+		bool "OpenSSL"
+		default y
+		depends on HAVE_LIBSSL
+
+	config SSL_IMPL_WOLFSSL
+		bool "wolfSSL (with OpenSSL compatibility layer)"
+		depends on HAVE_WOLFSSL
+
+	config SSL_IMPL_MBEDTLS
+		bool "mbedTLS"
+		depends on HAVE_MBEDTLS
+
+	config SSL_IMPL_GPGME
+		bool "gpgme"
+		depends on HAVE_GPGME
+
+	config PKCS11
+		bool "PKCS#11 (p11-kit)"
+		depends on HAVE_P11KIT
+endmenu
+
+config SWUPDATE_CRYPTO
+	bool
+
+config HASH_VERIFY
+	bool "Allow to add sha256 hash to each image"
+	depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS
+	select SWUPDATE_CRYPTO
+	help
+	  Allow to add a sha256 hash to an artifact.
+	  This is automatically set in case of Signed Image
+
+comment "Hash checking needs an SSL implementation"
+	depends on !SSL_IMPL_OPENSSL && !SSL_IMPL_WOLFSSL && !SSL_IMPL_MBEDTLS
+
+config SIGNED_IMAGES
+	bool "Enable verification of signed images"
+	depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS
+	select HASH_VERIFY
+comment "Image signature verification needs an SSL implementation"
+	depends on !SSL_IMPL_OPENSSL && !SSL_IMPL_WOLFSSL && !SSL_IMPL_MBEDTLS
+
+menu "Signature verification algorithm"
+	depends on SIGNED_IMAGES
+
+	config SIGALG_RAWRSA
+		bool "RSA PKCS#1.5"
+		default y
+		depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS
+
+	config SIGALG_RSAPSS
+		bool "RSA PSS"
+		default n
+		depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS
+
+	config SIGALG_CMS
+		bool "Cryptographic Message Syntax (CMS) / PKCS#7"
+		default y
+		depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS
+
+	config SIGALG_GPG
+		bool "GPG signing"
+		depends on SSL_IMPL_GPGME
+endmenu
+
+menu "CMS / PKCS#7 signature verification options"
+	depends on SIGALG_CMS
+
+config CMS_IGNORE_EXPIRED_CERTIFICATE
+	bool "Ignore expired certificates"
+	depends on SIGALG_CMS
+
+config CMS_IGNORE_CERTIFICATE_PURPOSE
+	bool "Ignore X.509 certificate purpose"
+	depends on SIGALG_CMS
+
+config CMS_SKIP_UNKNOWN_SIGNERS
+	bool "Ignore unverifiable signatures if known signer verifies. This is implied for digest providers other than OpenSSL."
+	depends on SIGALG_CMS && SSL_IMPL_OPENSSL
+
+config CMS_IGNORE_ADDITIONAL_CERTS
+	bool "Use only direct signer certificates from CMS signature. This is implied for digest providers other than OpenSSL."
+	depends on SIGALG_CMS && SSL_IMPL_OPENSSL
+
+config CMS_REQUIRE_HYBRID_PQC
+	bool "Require a hybrid (classic + post-quantum) signature"
+	depends on SIGALG_CMS && SSL_IMPL_OPENSSL && !CMS_SKIP_UNKNOWN_SIGNERS
+	help
+	  Reject a verified CMS update unless its signers include at least one
+	  classic (RSA, ECDSA) and at least one post-quantum (ML-DSA, SLH-DSA)
+	  signature. Without this, an attacker can strip one signer from the
+	  unauthenticated SignerInfo set and downgrade a dual-signed update to a
+	  single algorithm.
+
+	  Only holds when every signer is trusted, so it is not compatible with
+	  CMS_SKIP_UNKNOWN_SIGNERS. Requires OpenSSL >= 3.5.
+endmenu
+
+menu "Encryption"
+
+config ENCRYPTED_IMAGES
+	bool "Images can be encrypted with a symmetric key"
+	depends on SSL_IMPL_OPENSSL || SSL_IMPL_WOLFSSL || SSL_IMPL_MBEDTLS || PKCS11
+	select SWUPDATE_CRYPTO
+comment "Image encryption needs an SSL implementation"
+	depends on !SSL_IMPL_OPENSSL && !SSL_IMPL_WOLFSSL && !SSL_IMPL_MBEDTLS && !PKCS11
+
+config ENCRYPTED_SW_DESCRIPTION
+	bool "Even sw-description is encrypted"
+	depends on ENCRYPTED_IMAGES
+	help
+	  sw-description is not encrypted as default, but it is encrypted
+	  if this is set. It is a compile time option, and mix of plain and
+	  encrypted sw-descriptions is not possible.
+
+config ASYM_ENCRYPTED_SW_DESCRIPTION
+	bool "Asymmetrical encrypted sw-description"
+	depends on ENCRYPTED_SW_DESCRIPTION
+	select SIGALG_ASYM_DEC_CMS
+	default n
+	help
+	  This option enables support for asymmetrical encrypted sw-description,
+	  making it possible to decrypt images device specific.
+
+menu "Asymmetric decryption algorithm"
+	depends on ASYM_ENCRYPTED_SW_DESCRIPTION
+
+	config SIGALG_ASYM_DEC_CMS
+		bool "Cryptographic Message Syntax (CMS) / PKCS#7"
+		default n
+		depends on SSL_IMPL_OPENSSL
+endmenu
+
+config ENCRYPTED_IMAGES_HARDEN_LOGGING
+	bool "Harden logging for encrypted images"
+	default n
+	depends on ENCRYPTED_IMAGES
+	help
+	  This option addresses a theoretical weakness of the AES-CBC encryption in
+	  combination with streamed images. An adversary can target each 16-byte
+	  block of encrypted data within an image and decrypt it, if they can apply a
+	  huge amount of manipulated firmware updates and observe the logged
+	  messages. On average, 2048 update attempts are needed for each block.
+	  Select if this scenario poses a risk. If set, log messages related to a
+	  hash mismatch and errors in the decryption finalization (padding) of a
+	  streamed image are suppressed.
+
+endmenu
+
