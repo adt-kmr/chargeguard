@@ -141,3 +141,29 @@ def lookup_identity(device_id: str) -> dict | None:
     conn.close()
     return dict(row) if row else None
 
+
+def save_run(session_id: str, charger_mode: str, device_id: str,
+             firmware_hash: str, verdict: str, results: list,
+             report_path: str = None) -> None:
+    conn = get_conn()
+    conn.execute("""
+        INSERT OR REPLACE INTO audit_runs
+        (session_id, timestamp, charger_mode, device_id, firmware_hash, verdict, results_json, report_path)
+        VALUES (?,?,?,?,?,?,?,?)
+    """, (session_id, datetime.utcnow().isoformat(), charger_mode, device_id,
+          firmware_hash, verdict, json.dumps(results), report_path))
+    conn.commit()
+    conn.close()
+
+
+def get_run(session_id: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM audit_runs WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        d["results"] = json.loads(d["results_json"])
+        return d
+    return None
