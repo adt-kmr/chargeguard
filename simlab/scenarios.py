@@ -77,7 +77,7 @@ class ScenarioRunner:
     async def start(self, sc: Scenario, on_log=None) -> None:
         await self.stop()
         ocpp_attack = {"burst": "burst", "c2": "c2"}.get(sc.behaviour, "none")
-        tap_attack = sc.behaviour if sc.behaviour in ("port_scan", "c2", "dns_exfil") else "none"
+        tap_attack = sc.behaviour if sc.behaviour in ("port_scan", "c2", "dns_exfil", "burst") else "none"
         args = [sys.executable, "-m", "charger.agent", "--firmware", str(IMAGES / FIRMWARE[sc.firmware]),
                 "--identity", sc.identity, "--attack", ocpp_attack, "--attack-at", sc.attack_timing,
                 "--attack-delay", str(sc.attack_delay), "--attack-rate", str(min(sc.rate, 60)),
