@@ -56,6 +56,10 @@ class TPMBackend(ABC):
     @abstractmethod
     def read_pcrs(self, selection: PCRSelection) -> PCRValues: ...
 
+    def reset_pcr(self, index: int) -> None:
+        """Reset a resettable PCR (16 and 23 on PC-client TPMs) to zeros."""
+        raise NotImplementedError(f"{type(self).__name__} cannot reset PCRs")
+
     @abstractmethod
     def extend_pcr(self, index: int, data: bytes, bank: HashAlg = HashAlg.SHA256) -> None:
         """Hash `data` with `bank` and extend it into PCR `index` (measured boot style)."""

@@ -109,8 +109,10 @@ class Tap:
             tasks.append(asyncio.create_task(self.attack_traffic()))
         try:
             await asyncio.sleep(duration_s)
+            self._send(self.table.flush())          # normal end: export what is left
         finally:
+            # when cancelled (the next scenario is starting) the partial flows are dropped:
+            # flushing them would deliver this scenario's traffic into the next session
             for t in tasks:
                 t.cancel()
-            self._send(self.table.flush())
             self.sock.close()

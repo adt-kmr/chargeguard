@@ -23,6 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from config import SITE  # noqa: E402
+from config import NODE_MODE  # noqa: E402
 from config import EVIDENCE_DIR, OCPP_HOST, OCPP_PATH, OCPP_PORT, STATIC_DIR  # noqa: E402
 from evidence.report_generator import verify_report  # noqa: E402
 from gateway.csms import Gateway  # noqa: E402
@@ -77,7 +79,18 @@ async def status():
     return {"gateway": f"ws://{OCPP_HOST}:{OCPP_PORT}{OCPP_PATH}/<charge_point_id>",
             "advisor_engine": gateway.advisor.engine_name,
             "active_session": gateway.active.session_id if gateway.active else None,
+            "node_mode": NODE_MODE,
             "quarantined": sorted(gateway.quarantine)}
+
+
+@app.post("/api/quarantine/{device_id}/release")
+async def release_quarantine(device_id: str):
+    """Operator action once a quarantined charger has been repaired: allow it to reconnect and be re-verified."""
+    if device_id not in gateway.quarantine:
+        raise HTTPException(404, "Charger is not quarantined.")
+    gateway.quarantine.discard(device_id)
+    fw = gateway.firewall.release(SITE["charger_ip"])
+    return {"released": device_id, "firewall": fw.to_dict()}
 
 
 @app.post("/api/verify")

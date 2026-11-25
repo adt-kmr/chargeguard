@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 
 import websockets
@@ -27,6 +28,10 @@ from ocpp.v16.enums import (
 )
 
 from advisor import Advisor
+from integrations.behavior.firewall import Firewall  # noqa: E402
+from checks.identity.identity_check import CheckResult  # noqa: E402
+from config import NODE_MODE  # noqa: E402
+from config import MEASURED_PCR  # noqa: E402
 from config import (
     VENDOR, ATTESTATION_VENDOR_ID, CHECK_TIMINGS, EVIDENCE_DIR, FLOW_SENSOR_HOST, FLOW_SENSOR_PORT,
     HEARTBEAT_INTERVAL_S, OCPP_HOST, OCPP_PATH, OCPP_PORT, PRESENTATION_PACING, SITE,
@@ -41,6 +46,7 @@ from orchestrator.trust_engine import fuse
 from threatintel import analyse_url
 
 log = logging.getLogger("gateway")
+CHECK_TIMEOUT_S = 2.0
 BEHAVIOUR_WINDOW_S = 10.0
 
 
@@ -148,6 +154,7 @@ class Gateway:
         self.active: Session | None = None
         self.quarantine: set[str] = set()
         self.advisor = Advisor()
+        self.firewall = Firewall(protect=(SITE["node_ip"], OCPP_HOST))
         self._server = None
         self._collector = None
         self.connections: dict[str, tuple] = {}     # device_id -> (ws, cp)
@@ -179,13 +186,18 @@ class Gateway:
         s = Session(session_id, scenario)
         self.sessions[session_id] = s
         self.active = s
-        self.quarantine.clear()                  # each demo run starts from a clean site
+        if NODE_MODE != "node":
+            self.quarantine.clear()              # each demo run starts from a clean site
         return s
 
     async def _handle(self, ws):
         path = ws.request.path
         device_id = path.rstrip("/").split("/")[-1]
         session = self.active
+        if NODE_MODE == "node" and path.startswith(OCPP_PATH) and (session is None or session.device_id):
+            # a real charger plugged in: every connection is a new verification
+            session = self.open_session(str(uuid.uuid4()), {"name": "live", "source": "charger", "remote": ws.remote_address[0]})
+            session.emit("scenario", name="live", source="charger")
         if session is None or not path.startswith(OCPP_PATH):
             await ws.close(1008, "no active verification session")
             return
@@ -216,7 +228,16 @@ class Gateway:
         start_off, end_off = CHECK_TIMINGS[name]
         session.emit("check_start", check=name)
         t0 = time.perf_counter()
-        result = await coro_fn()
+        try:
+            # a check that hangs or raises yields a failed check, never a missing verdict
+            result = await asyncio.wait_for(coro_fn(), timeout=CHECK_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            log.error("check %s timed out after %.1f s", name, CHECK_TIMEOUT_S)
+            result = CheckResult(name, "fail", f"Check did not complete within {CHECK_TIMEOUT_S:g} s.", {"error": "timeout"})
+        except Exception as e:  # noqa: BLE001 - any failure of a check must still produce a verdict
+            log.exception("check %s failed", name)
+            result = CheckResult(name, "fail", f"Check could not be completed ({type(e).__name__}).",
+                                 {"error": f"{type(e).__name__}: {e}"[:300]})
         result.timing = time.perf_counter() - t0
         if PRESENTATION_PACING:
             wait = end_off - (time.monotonic() - session.verify_t0)
@@ -239,7 +260,7 @@ class Gateway:
             try:
                 res = await cp.call(call.DataTransfer(
                     vendor_id=ATTESTATION_VENDOR_ID, message_id="AttestationRequest",
-                    data=json.dumps({"nonce": nonce.hex(), "pcrs": [0]})))
+                    data=json.dumps({"nonce": nonce.hex(), "pcrs": [MEASURED_PCR]})))
                 state["resp"] = json.loads(res.data) if res.status == DataTransferStatus.accepted and res.data else None
             except (asyncio.TimeoutError, json.JSONDecodeError):
                 state["resp"] = None
@@ -340,17 +361,14 @@ class Gateway:
             self.quarantine.add(cp.id)
             steps.append(f"Charger {cp.id} quarantined; OCPP connection closed (1008).")
         peers = b.get("blocked_peers", [])
-        nft = ["table inet chargeguard { set quarantine { type ipv4_addr; } set blocked { type ipv4_addr; }",
-               "  chain forward { type filter hook forward priority 0; policy accept;",
-               "    ip saddr @quarantine drop; ip daddr @quarantine drop; ip daddr @blocked drop; } }"]
-        if action == "isolate":
-            nft.append(f"add element inet chargeguard quarantine {{ {SITE['charger_ip']} }}")
-        ips = [p for p in peers if p and p[0].isdigit()]
-        if ips:
-            nft.append(f"add element inet chargeguard blocked {{ {', '.join(ips)} }}")
+        fw = self.firewall.enforce(quarantine=[SITE["charger_ip"]] if action == "isolate" else [], block=peers)
+        if fw.applied:
+            steps.append("nftables rules applied on the bridge.")
+        elif fw.error:
+            steps.append(f"nftables not applied: {fw.error}")
         session.enforcement = {
             "action": action, "when": when, "steps": steps, "blocked_peers": peers,
-            "artifacts": {"nftables": nft, "nftables_mode": "rendered (applied by the node service on the Raspberry Pi)",
+            "artifacts": {"nftables": fw.commands, "nftables_mode": fw.mode, "firewall": fw.to_dict(),
                           "wolfsentry": render_wolfsentry_config(report, checks.baseline())},
         }
         session.emit("enforcement", **session.enforcement,

@@ -1583,6 +1583,36 @@ function updateHUDFirmware() {
 }
 
 // ── Verification ────────────────────────────────────────────────────────────
+// Node mode (Raspberry Pi): sessions open when a real charger plugs in; follow each new one.
+let followed = null;
+async function followLiveSessions() {
+  try {
+    const st = await fetch('/api/status').then(r => r.json());
+    if (st.node_mode !== 'node') return;
+    document.getElementById('btnVerify').disabled = true;
+    if (st.active_session && st.active_session !== followed) {
+      followed = st.active_session;
+      attachSession(st.active_session, 'Charger connected — verification started');
+    }
+  } catch (e) { /* server restarting */ }
+  setTimeout(followLiveSessions, 1500);
+}
+
+function attachSession(session_id, note) {
+  if (ws) { ws.close(); ws = null; }
+  stopTimer();
+  resetUI();
+  if (window.sceneCtrl) window.sceneCtrl.reset();
+  setStatusPill('running', 'SCANNING');
+  sessionId = session_id;
+  document.getElementById('sessionDisplay').textContent = 'Session: ' + session_id.slice(0, 8) + '…';
+  addAlert('info', note);
+  ws = new WebSocket(`ws://${location.host}/ws/${session_id}`);
+  ws.onmessage = e => handleEvent(JSON.parse(e.data));
+  ws.onclose = () => stopTimer();
+}
+setTimeout(followLiveSessions, 500);
+
 async function startVerification() {
   if(ws){ ws.close(); ws=null; }
   stopTimer();

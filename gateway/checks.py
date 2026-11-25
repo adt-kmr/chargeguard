@@ -9,11 +9,13 @@ CheckResult type the report generator and trust engine already use.
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from config import MEASURED_PCR
 from attestation import (
     AttestationEvidence, AttestationStatus, EndorsementKey, HashAlg, PCRSelection, PCRValues, Quote,
     get_verifier,
@@ -92,9 +94,9 @@ def check_integrity(resp: dict | None, identity: CheckResult | None = None) -> C
                             "measured_boot": "unverified (attestation failed)", "compute_ms": _ms(t0)})
     fw = resp["firmware"]
     digest = fw["payload_sha256"]
-    pcr0 = resp["pcrs"]["values"].get("0")
+    pcr0 = resp["pcrs"]["values"].get(str(MEASURED_PCR))          # PCR0, or PCR 23 on a hardware TPM
     ev = {"version": fw["version"], "vendor": fw["vendor"], "payload_sha256": digest[:20] + "…",
-          "measured_pcr0": (pcr0 or "")[:20] + "…"}
+          "measured_pcr0": (pcr0 or "")[:20] + "…", "measured_pcr_index": MEASURED_PCR}
     record = lookup_firmware(digest)
     golden = lookup_golden_pcr0(digest)
     if record is None:
@@ -184,7 +186,11 @@ def check_behaviour(records: list[dict], window_s: float, prior_messages: list[s
     flows: the raw NetFlow records of the window, for the learned traffic models."""
     t0 = time.perf_counter()
     report = _BASELINE.evaluate(records, start_phase=_BASELINE.phase_reached(prior_messages))
-    learned_anomalies, learned_ev = _learned(flows or [], window_s, window_s if span_s is None else span_s)
+    try:
+        learned_anomalies, learned_ev = _learned(flows or [], window_s, window_s if span_s is None else span_s)
+    except Exception as e:  # noqa: BLE001 - the learned models add evidence; they must never break the check
+        logging.getLogger("gateway").exception("learned traffic models failed")
+        learned_anomalies, learned_ev = [], {"error": f"{type(e).__name__}: {e}"[:300]}
     anomalies = [{"rule": a.rule, "message": a.message, "peer": a.peer, "severity": a.severity}
                  for a in report.anomalies[:12]] + learned_anomalies + list(extra_anomalies or [])
     action = "isolate" if extra_anomalies else report.action.value

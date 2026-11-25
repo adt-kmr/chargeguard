@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -35,21 +36,31 @@ CHARGER_MODEL = "ChargeCo AC-7 Pro"
 # ── Live gateway (OCPP 1.6-J) ───────────────────────────────────────────────
 # The ChargeGuard node terminates the charger's OCPP connection, so it sits
 # inline and sees every message. In production it forwards to the upstream CSMS.
-OCPP_HOST = "127.0.0.1"
+# demo: sessions start from the dashboard, which launches a simulated charger.
+# node: the Raspberry Pi deployment; a session opens whenever a real charger connects,
+#       quarantines persist across sessions and the dashboard follows each one.
+NODE_MODE = os.environ.get("CHARGEGUARD_NODE_MODE", "demo")
+OCPP_HOST = os.environ.get("CHARGEGUARD_OCPP_HOST", "127.0.0.1")   # 0.0.0.0 on the node
 OCPP_PORT = 9000
 OCPP_PATH = "/ocpp"
 HEARTBEAT_INTERVAL_S = 5
 ATTESTATION_VENDOR_ID = "org.chargeguard"      # OCPP DataTransfer vendorId
 
+# PCR that holds the charger's firmware measurement. 0 in software mode (a fresh
+# software TPM per boot). On a hardware TPM, PCR 0 resets only at power-on, so the
+# charger agent measures its launch into the resettable application PCR 23 instead:
+# reset, then extend, giving the same value SHA-256(0^32 || SHA-256(image)).
+MEASURED_PCR = int(os.environ.get("CHARGEGUARD_MEASURED_PCR", "0"))
+
 # Flow collector: receives IPFIX-style flow records exported by the site
 # switch / bridge (simulated by simlab.tap in software mode).
-FLOW_SENSOR_HOST = "127.0.0.1"
+FLOW_SENSOR_HOST = os.environ.get("CHARGEGUARD_FLOW_HOST", "127.0.0.1")
 FLOW_SENSOR_PORT = 9100
 
 # Logical site addressing used by the tap simulator and the baseline
 SITE = {
-    "charger_ip": "10.20.0.15",
-    "node_ip":    "10.20.0.1",     # ChargeGuard node: OCPP endpoint, NTP, DNS resolver
+    "charger_ip": os.environ.get("CHARGEGUARD_CHARGER_IP", "10.20.0.15"),
+    "node_ip":    os.environ.get("CHARGEGUARD_NODE_IP", "10.20.0.1"),   # node: OCPP endpoint, NTP, DNS resolver
 }
 
 # Presentation pacing: the real checks take milliseconds. The dashboard holds

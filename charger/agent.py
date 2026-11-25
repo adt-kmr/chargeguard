@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import random
 import sys
 from datetime import datetime, timezone
@@ -44,6 +45,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 
 from attestation import PCRSelection  # noqa: E402
 from attestation.backends.software import SoftwareTPM  # noqa: E402
+from attestation.config import AttestationConfig  # noqa: E402
+from config import MEASURED_PCR  # noqa: E402
 from config import (  # noqa: E402
     ATTESTATION_VENDOR_ID, CHARGER_MODEL, DEVICE_ID, OCPP_HOST, OCPP_PATH, OCPP_PORT, VENDOR,
 )
@@ -73,13 +76,30 @@ class FirmwareImage:
         self.vendor_sig = hdr[SIG_OFFSET:SIG_OFFSET + 64].hex()
 
 
+def open_tpm(backend: str):
+    """The charger's TPM: the software TPM (default) or a real one through tpm2-tss
+    (CHARGEGUARD_TPM_BACKEND=tpm2-tss, CHARGEGUARD_TPM_TCTI=device:/dev/tpmrm0)."""
+    if backend == "software":
+        return SoftwareTPM(key_path=attestation_key_path(DEVICE_ID))
+    from attestation.backends.tss import TSSBackend
+    return TSSBackend(AttestationConfig(), startup=False)
+
+
+def measure_launch(tpm, image: bytes, pcr: int) -> None:
+    """Measured launch: the firmware image is extended into `pcr` before anything else runs.
+    A resettable PCR is reset first, so the value is the same on every start."""
+    if pcr in (16, 23):
+        tpm.reset_pcr(pcr)
+    tpm.extend_pcr(pcr, image)
+
+
 class ChargerIdentity:
-    def __init__(self, mode: str):
+    def __init__(self, mode: str, backend: str = "software"):
         self.mode = mode
         if mode == "legitimate":
             self.device_id = DEVICE_ID
             self.device_key = get_device_key()
-            self.tpm = SoftwareTPM(key_path=attestation_key_path(DEVICE_ID))
+            self.tpm = open_tpm(backend)
         elif mode == "clone":                 # copies the ID, cannot copy the keys
             self.device_id = DEVICE_ID
             self.device_key = Ed25519PrivateKey.generate()
@@ -231,9 +251,9 @@ class ChargerAgent(ChargePoint):
 
 
 async def main(args) -> int:
-    identity = ChargerIdentity(args.identity)
+    identity = ChargerIdentity(args.identity, args.tpm if args.identity == "legitimate" else "software")
     firmware = FirmwareImage(Path(args.firmware))
-    identity.tpm.extend_pcr(0, firmware.raw)      # measured boot: boot ROM measures the image
+    measure_launch(identity.tpm, firmware.raw, MEASURED_PCR)   # the image is measured before it runs
     url = f"ws://{args.host}:{args.port}{OCPP_PATH}/{identity.device_id}"
     log.info("booted firmware %s (payload %s...), connecting to %s",
              firmware.version, firmware.payload_hash[:12], url)
@@ -258,6 +278,9 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="OCPP 1.6 charger agent")
     ap.add_argument("--firmware", default=str(ROOT / "firmware" / "images" / "good_v2.1.0.bin"))
     ap.add_argument("--identity", choices=["legitimate", "clone", "unknown"], default="legitimate")
+    ap.add_argument("--tpm", choices=["software", "tpm2-tss"],
+                    default=os.environ.get("CHARGEGUARD_TPM_BACKEND", "software"),
+                    help="the legitimate charger's TPM (a clone or rogue device never has the enrolled one)")
     ap.add_argument("--host", default=OCPP_HOST)
     ap.add_argument("--port", type=int, default=OCPP_PORT)
     ap.add_argument("--id-tag", default="RFID-04A2C1F9")

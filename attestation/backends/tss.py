@@ -113,6 +113,10 @@ class TSSBackend(TPMBackend):
         values = [bytes(d) for d in digests]
         return PCRValues(selection.bank, dict(zip(sorted(selection.indices), values)))
 
+    def reset_pcr(self, index: int) -> None:
+        from tpm2_pytss import ESYS_TR
+        self._require().pcr_reset(ESYS_TR.parse(f"pcr{index}"))
+
     def extend_pcr(self, index: int, data: bytes, bank: HashAlg = HashAlg.SHA256) -> None:
         from tpm2_pytss import ESYS_TR, TPM2_ALG, TPML_DIGEST_VALUES, TPMT_HA
         from ..formats import hash_fn

@@ -57,6 +57,12 @@ class SoftwareTPM(TPMBackend):
         bank = self._banks[selection.bank]
         return PCRValues(selection.bank, {i: bank[i] for i in selection.indices})
 
+    def reset_pcr(self, index: int) -> None:
+        if index not in (16, 23):
+            raise ValueError(f"PCR {index} is not resettable")
+        for bank in self._banks:
+            self._banks[bank][index] = bytes(len(self._banks[bank][index]))
+
     def extend_pcr(self, index: int, data: bytes, bank: HashAlg = HashAlg.SHA256) -> None:
         if not 0 <= index < NUM_PCRS:
             raise ValueError(f"PCR index out of range: {index}")
