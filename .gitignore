@@ -116,3 +116,10 @@ desktop.ini
 # Downloaded datasets (fetched by scripts/fetch_datasets.py) and training artefacts
 /data/raw/
 /data/interim/
+
+# Generated presentation media (report/video build inputs) and deliverables
+/media/
+/deliverables/
+
+# Hydra run logs written by the ExecuTorch LLM export
+/outputs/
