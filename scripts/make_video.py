@@ -321,17 +321,59 @@ def s_why(t):
     return img
 
 
+LOGO_PATH = Path("deliverables/assets/thapar logo.jpg")
+_logo = None
+
+
+def watermark(img):
+    """Institute logo, small, on a white card at the top right of every frame."""
+    global _logo
+    if _logo is None:
+        if not LOGO_PATH.exists():
+            _logo = False
+        else:
+            im = Image.open(LOGO_PATH).convert("RGB")
+            grey = im.convert("L").point(lambda v: 255 if v < 235 else 0)
+            im = im.crop(grey.getbbox() or (0, 0, im.width, im.height))
+            h = 64
+            im = im.resize((int(im.width * h / im.height), h), Image.LANCZOS)
+            pad = 10
+            card = Image.new("RGBA", (im.width + 2 * pad, h + 2 * pad), (0, 0, 0, 0))
+            ImageDraw.Draw(card).rounded_rectangle((0, 0, card.width - 1, card.height - 1), 12,
+                                                   fill=(255, 255, 255, 235))
+            card.paste(im, (pad, pad))
+            _logo = card
+    if _logo:
+        img.paste(_logo, (W - _logo.width - 28, 24), _logo)
+    return img
+
+
+def s_intro(t):
+    img = Image.new("RGB", (W, H), INK)
+    draw_text_anim(img, t, 0.1, (W / 2, 360), "ChargeGuard", font("serifb", 150), CREAM, anchor="mm", dur=0.7)
+    draw_text_anim(img, t, 0.7, (W / 2, 500), "PS 3  ·  On-device threat, phishing & scam detection",
+                   font("sansb", 40), CLAY, anchor="mm")
+    draw_text_anim(img, t, 1.2, (W / 2, 640), "Made by Aditya Kumar   ·   Mentored by Dr. Amit Kumar",
+                   font("serif", 44), CREAM, anchor="mm")
+    draw_text_anim(img, t, 1.6, (W / 2, 715), "Thapar Institute of Engineering and Technology, Patiala",
+                   font("serif", 40), (210, 200, 185), anchor="mm")
+    return img
+
+
 def s_end(t):
     img = Image.new("RGB", (W, H), INK)
     draw_text_anim(img, t, 0.2, (W / 2, 430), "Plug in. Know in five seconds.", font("serifb", 92), CREAM, anchor="mm")
     draw_text_anim(img, t, 0.9, (W / 2, 560), "Trust for every EV charger, verified at the edge.", font("serif", 46), (210, 200, 185), anchor="mm")
     draw_text_anim(img, t, 1.5, (W / 2, 680), "ARM EDGE AI  ·  EXECUTORCH  ·  LLAMA 3.2  ·  NO CLOUD", font("sansb", 32), CLAY, anchor="mm")
+    draw_text_anim(img, t, 1.9, (W / 2, 900), "ChargeGuard  ·  Aditya Kumar  ·  Mentored by Dr. Amit Kumar  ·  "
+                   "Thapar Institute of Engineering and Technology, Patiala", font("sans", 28), (170, 160, 145), anchor="mm")
     return img
 
 
 def build():
     # Source times come from media/raw/timeline.json of the recording.
     return [
+        (4.5, s_intro),
         (6.5, s_open),
         (7.0, s_threats),
         (5.0, s_title),
@@ -427,6 +469,7 @@ def main():
         nxt = starts[i] + d_
         if i + 1 < len(scenes) and T > nxt - XF:
             img = Image.blend(img, scenes[i + 1][1](0.0), (T - (nxt - XF)) / XF)
+        img = watermark(img)
         if T < 0.6:
             img = Image.blend(Image.new("RGB", (W, H), (0, 0, 0)), img, T / 0.6)
         return img
