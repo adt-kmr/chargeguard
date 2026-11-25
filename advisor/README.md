@@ -47,14 +47,14 @@ Development host (Intel Core i9-14900HX, WSL2), not a Raspberry Pi:
 
 | | Mains power | Battery |
 |---|---|---|
-| Decode | about 25 tok/s | about 12.5 tok/s |
-| Prefill | 260–290 tok/s | about 140 tok/s |
-| Time to first token | 0.6–0.8 s | about 1.2 s |
-| One explanation (30–60 tokens) | 1.5–3.5 s | 2.5–6 s |
+| Decode | about 25 tok/s | about 13–15 tok/s |
+| Prefill | 260–290 tok/s | about 150 tok/s |
+| Time to first token | 0.6–0.8 s | about 1.1 s |
+| One explanation (17–63 tokens) | 1.5–3.5 s | 2–5.5 s |
 | Resident memory | 1.8 GB | 1.8 GB |
 | Program size | 1.08 GB | |
 
-The committed file is the battery run. The Pi 5 decode ceiling from memory
+The committed file is the battery run; all seven explanations in it passed the grounding check. The Pi 5 decode ceiling from memory
 bandwidth is about 16 tok/s (17.1 GB/s ÷ 1.08 GB); `bench_llama.py` will
 produce the Arm figures there.
 

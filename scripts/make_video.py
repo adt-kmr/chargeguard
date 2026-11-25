@@ -222,14 +222,14 @@ _pair = None
 def s_driver(t):
     global _pair
     if _pair is None:
-        im = Image.open("media/report_img/driver_safety_pair.png").convert("RGB")
+        im = Image.open("media/report_img/driver_safety_llama_pair.png").convert("RGB")
         _pair = im.resize((int(im.width * 760 / im.height), 760), Image.LANCZOS)
     img = card_bg()
     a = fade_in(t, 0.0, 0.5)
     x = (W - _pair.width) // 2
     ImageDraw.Draw(img).rounded_rectangle((x - 14, 66, x + _pair.width + 14, 66 + 760 + 28), 16, fill=(255, 255, 255), outline=LINE, width=3)
     img.paste(_pair, (x, 80 + int((1 - a) * 20)))
-    caption(img, t, 0.3, "Driver safety · on-device", "Scam text and fake pay link, flagged in milliseconds", CLAY)
+    caption(img, t, 0.3, "Driver safety · on-device", "Flagged in milliseconds, explained by Llama on-device", CLAY)
     live_tag(img, t)
     return img
 
@@ -237,9 +237,9 @@ def s_driver(t):
 def s_numbers(t):
     img = card_bg()
     draw_text_anim(img, t, 0.1, (160, 130), "Measured, not promised.", font("serifb", 72), INK)
-    stats = [("11 / 11", "attack scenarios caught end to end"), ("47", "automated tests passing"),
+    stats = [("11 / 11", "attack scenarios caught end to end"), ("60", "automated tests passing"),
              ("< 100 ms", "real compute per verification"), ("0.942", "F1 on held-out scam messages"),
-             ("12 µs", "per detector inference on ExecuTorch"), ("190 MB", "whole node in memory")]
+             ("12 µs", "per detector inference on ExecuTorch"), ("25 tok/s", "Llama 3.2 1B on ExecuTorch")]
     for i, (big, small) in enumerate(stats):
         cx, cy = 160 + (i % 3) * 540, 330 + (i // 3) * 280
         draw_text_anim(img, t, 0.5 + i * 0.3, (cx, cy), big, font("serifb", 92), CLAY)
@@ -247,11 +247,12 @@ def s_numbers(t):
     return img
 
 
-def further_header(img, t, n, title):
+def further_header(img, t, n, title, label="FOR THE FURTHER ROUNDS", total=2, fill=CLAY):
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((160, 80, 640, 132), 26, fill=CLAY)
-    d.text((400, 106), "FOR THE FURTHER ROUNDS", font=font("sansb", 26), fill=(255, 255, 255), anchor="mm")
-    d.text((680, 106), f"{n} / 3", font=font("sansb", 26), fill=INK2, anchor="lm")
+    d.rounded_rectangle((160, 80, 640, 132), 26, fill=fill)
+    d.text((400, 106), label, font=font("sansb", 26), fill=(255, 255, 255), anchor="mm")
+    if n:
+        d.text((680, 106), f"{n} / {total}", font=font("sansb", 26), fill=INK2, anchor="lm")
     draw_text_anim(img, t, 0.1, (160, 170), title, font("serifb", 62), INK)
 
 
@@ -293,17 +294,17 @@ def s_hw_boot(t):
 
 def s_hw_llama(t):
     img = card_bg()
-    further_header(img, t, 3, "Llama 3.2 explains every verdict, on-device")
+    further_header(img, t, 0, "Llama 3.2 explains every verdict, on-device", label="BUILT · RUNNING NOW", fill=GREEN)
     d = ImageDraw.Draw(img)
     a = fade_in(t, 0.5, 0.6)
     if a > 0:
-        box(d, (160, 400, 560, 620), "Verified facts", "checks · CVEs · anomalies\nnothing else", fill=(255, 255, 255))
-        box(d, (720, 370, 1200, 650), "Llama 3.2 1B", "SpinQuant 4-bit · 1.08 GB\nExecuTorch · XNNPACK + KleidiAI\nCortex-A76 CPU", fill=CLAY_L, edge=CLAY)
-        box(d, (1360, 400, 1800, 620), "Plain language", "what happened, why,\nwhat to do next", fill=(255, 255, 255))
+        box(d, (160, 400, 560, 620), "Verified facts", "verdict · failed checks\nCVEs · anomalies", fill=(255, 255, 255))
+        box(d, (720, 370, 1200, 650), "Llama 3.2 1B", "SpinQuant 4-bit · 1.08 GB\nExecuTorch · XNNPACK\n~25 tokens/s · 1.8 GB RAM", fill=CLAY_L, edge=CLAY)
+        box(d, (1360, 400, 1800, 620), "Checked, then shown", "rejected if it contradicts\nthe evidence", fill=(255, 255, 255))
         arrow(d, (560, 510), (720, 510))
         arrow(d, (1200, 510), (1360, 510))
-    draw_text_anim(img, t, 1.4, (160, 740), "Export path built and verified; the weights download needs our Llama licence login.", font("sans", 36), INK2)
-    draw_text_anim(img, t, 1.7, (160, 790), "Runs after the verdict is signed, so it can never delay enforcement. Decode ceiling on Pi 5: ~16 tokens/s.", font("sans", 36), INK2)
+    draw_text_anim(img, t, 1.4, (160, 740), "Llama writes the explanation; remediation steps stay with grounded rules. An explanation that", font("sans", 36), INK2)
+    draw_text_anim(img, t, 1.7, (160, 790), "invents a CVE or calls a phishing link safe is rejected. Next: measure it on the Pi 5's Cortex-A76.", font("sans", 36), INK2)
     return img
 
 
@@ -352,9 +353,9 @@ def build():
         footage(76.4, 79.4, 3.0, zoom=(1.0, 1.6), focus=(0.9, 0.6)),
         (5.0, s_driver),
         (6.5, s_numbers),
+        (7.5, s_hw_llama),
         (7.0, s_hw_node),
         (7.5, s_hw_boot),
-        (7.5, s_hw_llama),
         (5.5, s_why),
         (4.5, s_end),
     ]

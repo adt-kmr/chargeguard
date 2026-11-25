@@ -40,8 +40,8 @@ CASES = {
                               "integrity": CHECK("pass", "Firmware v1.8.3 signed by vendor"),
                               "weaknesses": {"status": "warn", "detail": "5 known CVEs",
                                              "evidence": {"cves": [
-                                                 {"id": "CVE-2021-3711", "component": "openssl 1.1.1k", "fixed_in": "1.1.1l", "severity": "critical"},
-                                                 {"id": "CVE-2022-37434", "component": "zlib 1.2.11", "fixed_in": "1.2.12", "severity": "critical"}]}},
+                                                 {"id": "CVE-2021-3711", "component": "openssl 1.1.1k", "fixed_in": "1.1.1l", "severity": "critical", "cvss": 9.8},
+                                                 {"id": "CVE-2022-37434", "component": "zlib 1.2.11", "fixed_in": "1.2.12", "severity": "critical", "cvss": 9.8}]}},
                               "behavior": CHECK("pass", "Traffic matches the charger baseline")}, "enforcement": None},
     "compromised": {"verdict": "red", "reason": "Port scan detected during charging",
                     "checks": {"identity": CHECK("pass", "TPM quote verified"), "integrity": CHECK("pass", "Firmware v2.1.0 signed"),

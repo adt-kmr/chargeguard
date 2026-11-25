@@ -215,9 +215,23 @@ class LlamaExecuTorchAdvisor:
                       "expert. Rewrite the finding in two short, plain sentences: what happened and why it "
                       "matters. Use only the facts given. The checks listed as passed found no problem; never "
                       "describe them as problems. Do not give advice or steps.")
-    SYSTEM_THREAT = ("You explain to an EV driver whether a message or link is safe. Rewrite the finding in "
-                     "two short, calm, plain sentences: the verdict and the main reason. Use only the facts "
-                     "given. Do not give steps. Do not name any company, link or amount that is not in the facts.")
+    # Stating the decision in words matters: given only a verdict label, the model called a
+    # phishing link "safe" on every run; given the conclusion as a sentence, it explains it.
+    SYSTEM_THREAT = ("You explain to an EV driver whether a message or link is safe. The on-device checks have "
+                     "already decided; the decision is in 'conclusion'. Start with that conclusion, then give the "
+                     "main reason, in two short, calm, plain sentences. Use only the facts given. Do not give "
+                     "steps. Do not name any company, link or amount that is not in the facts.")
+
+    @staticmethod
+    def threat_prompt_facts(threat: dict, finding: str = "") -> dict:
+        f = _threat_facts(threat)
+        kind = "link" if f["type"] == "link" else "message"
+        bad = threat["verdict"] != "legitimate"
+        conclusion = (f"This {kind} is NOT safe: it is very likely a "
+                      f"{'phishing (fake) page' if kind == 'link' else 'scam'}." if bad else f"This {kind} looks safe.")
+        drop = {"verdict"} | (set() if bad else {"message_signals"})   # scam-leaning words confuse a "safe" story
+        return {"conclusion": conclusion, **({"finding": finding} if finding else {}),
+                **{k: v for k, v in f.items() if k not in drop}}
 
     CHECK_NAMES = {"identity": "identity", "integrity": "firmware integrity", "weaknesses": "known vulnerabilities",
                    "behavior": "network behaviour"}
@@ -259,7 +273,9 @@ class LlamaExecuTorchAdvisor:
         t = re.sub(r"[*#`]+", "", text)
         t = re.sub(r"^\s*(summary|explanation)\s*:\s*", "", t.strip(), flags=re.I)
         t = " ".join(t.split())
-        t = re.sub(r"^(here (is|are)|below (is|are))[^:]{0,90}:\s*", "", t, flags=re.I)   # "Here are two sentences:"
+        t = re.sub(r"^(here (is|are)|below (is|are))[^:]{0,90}:\s*", "", t, flags=re.I)
+        t = re.sub(r"^based on the (facts|checks)[^,]{0,40},\s*(the conclusion is that\s*)?", "", t, flags=re.I)
+        t = t[:1].upper() + t[1:]   # "Here are two sentences:"
         sentences = [x for x in re.split(r"(?<=[.!?])\s+", t)
                      if not re.search(r"\b(this (version|rewrite|explanation)|the original|rewritten|in summary)\b", x, re.I)]
         return " ".join(sentences[:2]).strip()
@@ -366,8 +382,9 @@ class LlamaExecuTorchAdvisor:
         return self.clean(self._text(self.prompt(ctx, finding)), facts, ctx.get("checks", {}))
 
     def explain_threat_text(self, threat: dict, finding: str = "") -> str:
-        facts = dict(_threat_facts(threat), finding=finding) if finding else _threat_facts(threat)
-        return self.clean(self._text(self.chat_prompt(self.SYSTEM_THREAT, facts)), facts)
+        facts = self.threat_prompt_facts(threat, finding)
+        text = self._text(self.chat_prompt(self.SYSTEM_THREAT, facts))
+        return self.clean(text, dict(facts, verdict=threat["verdict"]))
 
 
 class Advisor:
