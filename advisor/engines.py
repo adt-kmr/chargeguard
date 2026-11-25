@@ -3,7 +3,9 @@ Advisor engines: turn a signed verdict and its findings into a plain-language
 explanation and remediation steps for a non-expert operator.
 
   LlamaExecuTorchAdvisor   Llama 3.2 1B Instruct exported to an ExecuTorch .pte,
-                           run on the Arm CPU by ExecuTorch's llama runner.
+                           run on the CPU by ExecuTorch's runner: in-process (Raspberry Pi),
+                           or through the local Llama service (advisor/llama_service.py)
+                           when the node runs on Windows and ExecuTorch lives in WSL.
   GroundedTemplateAdvisor  Deterministic, rule-based. Uses only facts present in
                            the evidence. Used when no model is installed, and as
                            the fallback if generation fails or times out.
@@ -15,9 +17,12 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -32,6 +37,8 @@ class Advisory:
     risk: str = ""
     latency_ms: float = 0.0
     fallback_reason: str | None = None
+    steps_source: str | None = None        # set when the steps come from another engine
+    stats: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -81,10 +88,14 @@ class GroundedTemplateAdvisor:
                      "Warn drivers on site to pay only through the operator's official app."]
         elif status.get("behavior") == "fail":
             rules = sorted({a.get("rule") for a in _anomalies(ctx) if a.get("rule")})
+            blocked = (ctx.get("enforcement") or {}).get("action") == "block"
             summary = ("The charger started communicating in ways a healthy charger never does "
-                       f"({', '.join(rules) or 'abnormal traffic'}). It was isolated to protect the network.")
+                       f"({', '.join(rules) or 'abnormal traffic'}). "
+                       + ("The offending traffic was blocked and the charger rate-limited." if blocked
+                          else "It was isolated to protect the network."))
             risk = "A compromised charger can be used to reach other devices or leak data."
-            steps = ["Leave the charger isolated; the session was stopped safely.",
+            steps = [("Keep the block in place and watch the charger's message rate; the session was stopped safely."
+                      if blocked else "Leave the charger isolated; the session was stopped safely."),
                      "Collect the evidence report and network capture for your security team.",
                      "Reflash vendor firmware and rotate any credentials stored on the unit before reconnecting."]
         elif verdict == "amber":
@@ -146,11 +157,16 @@ class GroundedTemplateAdvisor:
 
 
 class LlamaExecuTorchAdvisor:
-    """Runs ExecuTorch's llama runner (examples/models/llama, `llama_main`) on the CPU."""
-    name = "Llama 3.2 1B Instruct · ExecuTorch (XNNPACK) · Arm CPU"
+    """Runs Llama 3.2 1B through ExecuTorch on the CPU.
+
+    Backends, in order: the in-process Python runner (TextLLMRunner), the local Llama service
+    over loopback HTTP, then ExecuTorch's C++ `llama_main` binary.
+    """
+    name = ("Llama 3.2 1B Instruct · ExecuTorch (XNNPACK) · "
+            + ("Arm CPU" if platform.machine().lower() in ("aarch64", "arm64") else "CPU"))
 
     def __init__(self, model: str | None = None, tokenizer: str | None = None,
-                 runner: str | None = None, timeout_s: float = 25.0, max_tokens: int = 220):
+                 runner: str | None = None, timeout_s: float = 25.0, max_tokens: int = 110):
         self.model = model or os.environ.get("CHARGEGUARD_LLAMA_PTE", str(ROOT / "models" / "llama3_2_1b.pte"))
         self.tokenizer = tokenizer or os.environ.get("CHARGEGUARD_LLAMA_TOKENIZER",
                                                      str(ROOT / "models" / "tokenizer.model"))
@@ -158,6 +174,8 @@ class LlamaExecuTorchAdvisor:
         self.timeout_s, self.max_tokens = timeout_s, max_tokens
         self._py_runner = None                 # ExecuTorch Python TextLLMRunner, created on first use
         self.last_stats: dict = {}
+        self.service_url = os.environ.get("CHARGEGUARD_LLAMA_URL", "http://127.0.0.1:8765").rstrip("/")
+        self._service_ok: tuple[float, bool] = (0.0, False)
 
     @staticmethod
     def _python_runner_available() -> bool:
@@ -167,37 +185,133 @@ class LlamaExecuTorchAdvisor:
         except ModuleNotFoundError:
             return False
 
-    def available(self) -> bool:
+    def _local_available(self) -> bool:
         if not (Path(self.model).exists() and Path(self.tokenizer).exists()):
             return False
         return self._python_runner_available() or Path(self.runner).exists()
 
-    SYSTEM_CHARGER = ("You are ChargeGuard's on-device security advisor for EV charging site operators. "
-                      "Explain the verdict in plain language for a non-expert, then give at most three "
-                      "numbered remediation steps. Use only the facts provided. Do not invent CVEs, "
-                      "versions or events. Reply as JSON: {\"summary\": str, \"risk\": str, \"steps\": [str]}.")
-    SYSTEM_THREAT = ("You are ChargeGuard's on-device safety assistant for EV drivers and site staff. "
-                     "A message or link was checked by local detectors. Explain in plain, calm language "
-                     "whether it is safe and why, then give at most three numbered actions. Use only the "
-                     "facts provided; never invent links, companies or amounts. Reply as JSON: "
-                     "{\"summary\": str, \"risk\": str, \"steps\": [str]}.")
+    def _service_available(self) -> bool:
+        """Health-check the local Llama service; the answer is cached for 15 s."""
+        if not self.service_url or self.service_url.lower() == "off":
+            return False
+        t, ok = self._service_ok
+        if time.monotonic() - t < 15:
+            return ok
+        try:
+            with urllib.request.urlopen(self.service_url + "/health", timeout=0.5) as r:
+                ok = bool(json.loads(r.read()).get("ok"))
+        except (OSError, ValueError):
+            ok = False
+        self._service_ok = (time.monotonic(), ok)
+        return ok
+
+    def available(self) -> bool:
+        return self._local_available() or self._service_available()
+
+    # A 1B model is fluent but drifts when given many facts, and is unreliable at structured output
+    # and advice. So Llama only rewrites the grounded finding in plain words, sees only the evidence
+    # behind it, and its text is checked before use; risk and steps come from the grounded rules.
+    SYSTEM_CHARGER = ("You explain an EV charger security result to a site operator who is not a security "
+                      "expert. Rewrite the finding in two short, plain sentences: what happened and why it "
+                      "matters. Use only the facts given. The checks listed as passed found no problem; never "
+                      "describe them as problems. Do not give advice or steps.")
+    SYSTEM_THREAT = ("You explain to an EV driver whether a message or link is safe. Rewrite the finding in "
+                     "two short, calm, plain sentences: the verdict and the main reason. Use only the facts "
+                     "given. Do not give steps. Do not name any company, link or amount that is not in the facts.")
+
+    CHECK_NAMES = {"identity": "identity", "integrity": "firmware integrity", "weaknesses": "known vulnerabilities",
+                   "behavior": "network behaviour"}
+    # words that, in the explanation, claim a problem in that check
+    PROBLEM_WORDS = {"weaknesses": r"vulnerab|CVE|weakness|exploit",
+                     "integrity": r"tamper|modif|unsigned|not signed|integrity (check )?fail",
+                     "identity": r"spoof|clone|rogue|counterfeit|fake (charger|device)|identity (could not|failed)",
+                     "behavior": r"scan|beacon|exfiltrat|flood|anomal|suspicious traffic"}
 
     @staticmethod
     def chat_prompt(system: str, facts: dict) -> str:
         return ("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n" + system +
-                "<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n" + json.dumps(facts) +
+                "<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nFacts: " + json.dumps(facts) +
                 "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n")
 
-    def prompt(self, ctx: dict) -> str:
-        facts = {"verdict": ctx.get("verdict"), "reason": ctx.get("reason"),
-                 "checks": {k: {"status": v.get("status"), "detail": v.get("detail")}
-                            for k, v in ctx.get("checks", {}).items()},
-                 "cves": _cves(ctx), "anomalies": _anomalies(ctx),
-                 "enforcement": ctx.get("enforcement")}
-        return self.chat_prompt(self.SYSTEM_CHARGER, facts)
+    @classmethod
+    def charger_facts(cls, ctx: dict, finding: str = "") -> dict:
+        checks = ctx.get("checks", {})
+        problems = {cls.CHECK_NAMES.get(k, k): v.get("detail") for k, v in checks.items()
+                    if v.get("status") in ("fail", "warn")}
+        facts = {"verdict": ctx.get("verdict"), "finding": finding or ctx.get("reason"),
+                 "problems": problems,
+                 "passed": [cls.CHECK_NAMES.get(k, k) for k, v in checks.items() if v.get("status") == "pass"]}
+        if _cves(ctx):
+            facts["cves"] = [f"{c.get('id')} in {c.get('component', '?')}" for c in _cves(ctx)][:5]
+        if _anomalies(ctx):
+            facts["anomalies"] = [x.get("rule") for x in _anomalies(ctx)][:5]
+        action = (ctx.get("enforcement") or {}).get("action")
+        if action:
+            facts["action_taken"] = {"isolate": "charger isolated from the network", "deny": "charging refused",
+                                     "block": "offending traffic blocked"}.get(action, action)
+        return facts
+
+    def prompt(self, ctx: dict, finding: str = "") -> str:
+        return self.chat_prompt(self.SYSTEM_CHARGER, self.charger_facts(ctx, finding))
+
+    @staticmethod
+    def tidy(text: str) -> str:
+        t = re.sub(r"[*#`]+", "", text)
+        t = re.sub(r"^\s*(summary|explanation)\s*:\s*", "", t.strip(), flags=re.I)
+        t = " ".join(t.split())
+        t = re.sub(r"^(here (is|are)|below (is|are))[^:]{0,90}:\s*", "", t, flags=re.I)   # "Here are two sentences:"
+        sentences = [x for x in re.split(r"(?<=[.!?])\s+", t)
+                     if not re.search(r"\b(this (version|rewrite|explanation)|the original|rewritten|in summary)\b", x, re.I)]
+        return " ".join(sentences[:2]).strip()
+
+    @classmethod
+    def clean(cls, text: str, facts: dict, checks: dict | None = None) -> str:
+        """Tidy the model's text and reject it if it cites, or claims, anything the evidence does not."""
+        t = cls.tidy(text)
+        if len(t) < 20:
+            raise RuntimeError("explanation too short")
+        known = json.dumps(facts)
+        for pat in (r"CVE-\d{4}-\d{4,}", r"\b\d+\.\d+(?:\.\d+)+[a-z]?\b", r"\b\d{1,3}(?:\.\d{1,3}){3}\b"):
+            for hit in re.findall(pat, t):
+                if hit not in known:
+                    raise RuntimeError(f"explanation cited '{hit}', which is not in the evidence")
+        cls._check_verdict(t, str(facts.get("verdict", "")))
+        for k, v in (checks or {}).items():
+            if v.get("status") in ("pass", "skip") and k in cls.PROBLEM_WORDS:
+                if cls._claims(cls.PROBLEM_WORDS[k], t) and not any(
+                        re.search(cls.PROBLEM_WORDS[k], str(x.get("detail", "")), re.I)
+                        for x in checks.values() if x.get("status") in ("fail", "warn")):
+                    raise RuntimeError(f"explanation described the {cls.CHECK_NAMES[k]} check as a problem, "
+                                       f"but it {'passed' if v.get('status') == 'pass' else 'was not run'}")
+        return t
+
+    NEGATED = r"\b(no|not|never|without|free of|zero|none|nothing)\b[^.]{0,40}$"
+
+    @classmethod
+    def _claims(cls, pattern: str, t: str) -> bool:
+        """True if the text asserts the pattern somewhere without negating it."""
+        return any(not re.search(cls.NEGATED, t[:m.start()], re.I) for m in re.finditer(pattern, t, re.I))
+
+    @classmethod
+    def _check_verdict(cls, t: str, verdict: str):
+        """The explanation must agree with the verdict and must not play a risk down."""
+        bad = verdict in ("red", "amber", "malicious", "scam", "phishing")
+        if bad and cls._claims(r"\b(is|are|looks|seems|appears)( (completely|perfectly|totally))? (safe|legitimate|genuine|secure|trustworthy)\b", t):
+            raise RuntimeError(f"explanation calls it safe, but the verdict is {verdict}")
+        if bad and re.search(r"not (exploitable|dangerous|a (real )?(risk|threat|problem))|no (real )?(risk|threat|danger)|harmless", t, re.I):
+            raise RuntimeError(f"explanation plays down a {verdict} verdict")
+        if verdict in ("green", "legitimate") and cls._claims(r"\b(scam|phishing|malicious|fraud\w*|unsafe|compromised|attack\w*)\b", t):
+            raise RuntimeError(f"explanation describes a threat, but the verdict is {verdict}")
 
     def _generate_python(self, prompt: str) -> str:
         """ExecuTorch's in-process Python runner (executorch.extension.llm.runner)."""
+        # The SpinQuant program uses ExecuTorch's Llama kernels (custom_sdpa, fast_hadamard_transform)
+        # and quantized ops; importing these modules registers them with the runtime.
+        from executorch.extension.llm.custom_ops import custom_ops  # noqa: F401
+        try:
+            from executorch.kernels import quantized  # noqa: F401
+        except ImportError:
+            pass
         from executorch.extension.llm.runner import GenerationConfig, TextLLMRunner
         if self._py_runner is None:
             self._py_runner = TextLLMRunner(self.model, self.tokenizer)
@@ -219,7 +333,7 @@ class LlamaExecuTorchAdvisor:
         finally:
             self._py_runner.reset()
         self.last_stats = stats
-        return "".join(pieces)
+        return "".join(pieces).replace("<|eot_id|>", "").replace("<|end_of_text|>", "")
 
     def _generate_binary(self, prompt: str) -> str:
         """ExecuTorch's C++ llama_main runner, if built for this machine."""
@@ -230,21 +344,30 @@ class LlamaExecuTorchAdvisor:
             raise RuntimeError(f"runner failed (code {proc.returncode})")
         return proc.stdout
 
-    def _generate(self, prompt: str) -> Advisory:
-        t0 = time.perf_counter()
-        text = self._generate_python(prompt) if self._python_runner_available() else self._generate_binary(prompt)
-        m = re.search(r"\{.*\}", text, re.S)
-        if not m:
-            raise RuntimeError("model output contained no JSON object")
-        out = json.loads(m.group(0))
-        return Advisory(self.name, out["summary"], list(out.get("steps", []))[:3], out.get("risk", ""),
-                        round((time.perf_counter() - t0) * 1000, 1))
+    def _generate_service(self, prompt: str) -> str:
+        req = urllib.request.Request(self.service_url + "/generate", method="POST",
+                                     data=json.dumps({"prompt": prompt, "max_tokens": self.max_tokens}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+                out = json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"Llama service error {e.code}") from e
+        self.last_stats = out.get("stats", {})
+        return out["text"]
 
-    def explain(self, ctx: dict) -> Advisory:
-        return self._generate(self.prompt(ctx))
+    def _text(self, prompt: str) -> str:
+        if self._local_available():
+            return self._generate_python(prompt) if self._python_runner_available() else self._generate_binary(prompt)
+        return self._generate_service(prompt)
 
-    def explain_threat(self, threat: dict) -> Advisory:
-        return self._generate(self.chat_prompt(self.SYSTEM_THREAT, _threat_facts(threat)))
+    def explain_text(self, ctx: dict, finding: str = "") -> str:
+        facts = self.charger_facts(ctx, finding)
+        return self.clean(self._text(self.prompt(ctx, finding)), facts, ctx.get("checks", {}))
+
+    def explain_threat_text(self, threat: dict, finding: str = "") -> str:
+        facts = dict(_threat_facts(threat), finding=finding) if finding else _threat_facts(threat)
+        return self.clean(self._text(self.chat_prompt(self.SYSTEM_THREAT, facts)), facts)
 
 
 class Advisor:
@@ -258,29 +381,35 @@ class Advisor:
     def engine_name(self) -> str:
         return self.llama.name if self.llama.available() else self.template.name
 
+    def _compose(self, base: Advisory, write) -> Advisory:
+        """Llama's explanation + the grounded engine's risk and steps; the template on any failure."""
+        if not self.llama.available():
+            base.fallback_reason = "Llama model not installed on this node (models/llama3_2_1b.pte)"
+            return base
+        t0 = time.perf_counter()
+        try:
+            summary = write()
+        except (RuntimeError, subprocess.TimeoutExpired, KeyError, OSError, ValueError) as e:
+            base.fallback_reason = f"Llama explanation not used for this run: {e}"
+            return base
+        return Advisory(self.llama.name, summary, base.steps, base.risk,
+                        round((time.perf_counter() - t0) * 1000, 1), steps_source="grounded rules",
+                        stats={k: v for k, v in self.llama.last_stats.items() if isinstance(v, (int, float))})
+
     def explain(self, ctx: dict) -> Advisory:
-        if self.llama.available():
-            try:
-                return self.llama.explain(ctx)
-            except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError) as e:
-                adv = self.template.explain(ctx)
-                adv.fallback_reason = f"Llama advisor unavailable for this run: {e}"
-                return adv
-        adv = self.template.explain(ctx)
-        adv.fallback_reason = "Llama model not installed on this node (models/llama3_2_1b.pte)"
-        return adv
+        base = self.template.explain(ctx)
+        return self._compose(base, lambda: self.llama.explain_text(ctx, base.summary))
 
     def explain_threat(self, threat: dict) -> Advisory:
         """Explain a threatintel result (analyse_message / analyse_url output)."""
-        if self.llama.available():
-            try:
-                return self.llama.explain_threat(threat)
-            except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, OSError) as e:
-                adv = self.template.explain_threat(threat)
-                adv.fallback_reason = f"Llama advisor unavailable for this run: {e}"
-                return adv
+        base = self.template.explain_threat(threat)
+        return self._compose(base, lambda: self.llama.explain_threat_text(threat, base.summary))
+
+    def explain_threat_fast(self, threat: dict) -> Advisory:
+        """Grounded explanation only: returned instantly, Llama's text follows via explain_threat."""
         adv = self.template.explain_threat(threat)
-        adv.fallback_reason = "Llama model not installed on this node (models/llama3_2_1b.pte)"
+        if self.llama.available():
+            adv.fallback_reason = "Llama explanation pending"
         return adv
 
 

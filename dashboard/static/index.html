@@ -1284,6 +1284,9 @@ window.sceneCtrl = {
 
   triggerScan() { _scanActive = true; _scanDir = 1; _scanY = 0; scanMat.opacity = .22; },
 
+  // Slow presentation orbit (off by default; used for recordings and kiosk displays)
+  autoRotate(on = true, speed = 0.6) { controls.autoRotate = on; controls.autoRotateSpeed = speed; },
+
   setVerdict(v) {
     if(PAL.tint[v]) { renderer.setClearColor(PAL.tint[v]); scene.fog.color.setHex(PAL.tint[v]); }
     const lc = { green:PAL.green, amber:PAL.amber, red:PAL.red }[v];
@@ -1879,6 +1882,7 @@ function advisoryHTML(a) {
     <div class="cve-ev-id">Advisor <span class="cve-sev ${llm ? 'sev-HIGH' : 'sev-MEDIUM'}" title="${esc(a.fallback_reason||'')}">${esc(a.engine)}</span></div>
     <div class="cve-ev-desc" style="margin:.25rem 0">${esc(a.summary)}</div>
     ${(a.steps||[]).map((s,i)=>`<div class="cve-ev-desc">${i+1}. ${esc(s)}</div>`).join('')}
+    ${a.steps_source ? `<div class="cve-ev-desc" style="opacity:.7">Explanation by Llama on this node in ${(a.latency_ms/1000).toFixed(1)} s · steps from ${esc(a.steps_source)}</div>` : ''}
   </div>`;
 }
 
@@ -2038,6 +2042,7 @@ async function openModal() {
   if(data.advisory) {
     const a = data.advisory;
     html += box(`ADVISOR — ${esc(a.engine)}`, line(a.summary) + (a.steps||[]).map((s,i)=>line(`${i+1}. ${s}`)).join('') +
+      (a.steps_source ? line('Steps from ' + a.steps_source + '; explanation generated on this node.') : '') +
       (a.fallback_reason ? line('Note: ' + a.fallback_reason) : ''));
   }
   html += box('INTEGRITY OF THIS REPORT',
@@ -2075,11 +2080,23 @@ async function tiCheck() {
     const a = r.advisory;
     out.innerHTML = `<div class="ti-card ${bad?'bad':'good'}">
       <div class="ti-head"><span>${label}</span><span class="ti-score">${(score*100).toFixed(0)}%</span></div>
-      <div class="ti-sum">${esc(a.summary)}</div>
+      <div class="ti-sum" id="tiSum">${esc(a.summary)}</div>
       ${(a.steps||[]).map((s,i)=>`<div>${i+1}. ${esc(s)}</div>`).join('')}
       <div>${tags.slice(0,5).map(t=>`<span class="ti-tag">${esc(t)}</span>`).join('')}</div>
-      <div class="ti-meta">On-device · ${ms.toFixed(2)} ms · advisor: ${esc(a.engine)}</div>
+      <div class="ti-meta">On-device · ${ms.toFixed(2)} ms · <span id="tiEngine">${r.explain_id ? 'Llama 3.2 is writing an explanation…' : 'advisor: ' + esc(a.engine)}</span></div>
     </div>`;
+    if(r.explain_id) {
+      const id = r.explain_id;
+      fetch('/api/threat/explain/' + id).then(x => x.ok ? x.json() : null).then(l => {
+        const sum = document.getElementById('tiSum'), eng = document.getElementById('tiEngine');
+        if(!sum || !eng || !l) return;
+        if(!l.fallback_reason) sum.textContent = l.summary;
+        const gen = l.stats && l.stats.num_generated_tokens;
+        eng.textContent = l.fallback_reason ? 'advisor: rule-based (grounded templates)'
+          : `explanation: ${l.engine} · ${(l.latency_ms/1000).toFixed(1)} s${gen ? ' · ' + gen + ' tokens' : ''} · steps: grounded rules`;
+        eng.title = l.fallback_reason || '';
+      }).catch(() => {});
+    }
   } catch(e) {
     out.textContent = 'Check failed: ' + e;
   } finally { btn.disabled = false; }

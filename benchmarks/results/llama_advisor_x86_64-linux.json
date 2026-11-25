@@ -1,0 +1,149 @@
+{
+  "model": "Llama-3.2-1B-Instruct SpinQuant INT4/EO8",
+  "pte": "models/llama3_2_1b.pte",
+  "pte_bytes": 1075128192,
+  "runtime": "ExecuTorch 1.6.0 TextLLMRunner, XNNPACK",
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "release": "6.6.87.2-microsoft-standard-WSL2",
+    "cpu": "Intel(R) Core(TM) i9-14900HX",
+    "power": "laptop on battery, Windows 'Balanced' plan (CPU throttled); WSL2 Ubuntu 24.04"
+  },
+  "role": "Llama writes the explanation; risk and steps come from the grounded rules",
+  "load_and_warmup_s": 14.96,
+  "peak_rss_mb": 1809,
+  "median": {
+    "ttft_ms": 1242,
+    "prefill_tok_s": 140.9,
+    "decode_tok_s": 12.5,
+    "wall_s": 5.06
+  },
+  "llama_text_accepted": "5/7",
+  "cases": [
+    {
+      "case": "healthy",
+      "prompt_tokens": 139,
+      "generated_tokens": 63,
+      "ttft_ms": 1205,
+      "prefill_tok_s": 115.4,
+      "decode_tok_s": 13.2,
+      "wall_s": 5.9,
+      "llama_text_used": true,
+      "rejected_because": null,
+      "engine": "Llama 3.2 1B Instruct \u00b7 ExecuTorch (XNNPACK) \u00b7 CPU",
+      "summary": "The EV charger is a secure device that runs authentic firmware and has no known vulnerabilities, and its network behavior matches its baseline. This matters because it indicates that the charger is a trusted and reliable device, and its security is not a concern.",
+      "steps": [
+        "Charging is authorised.",
+        "ChargeGuard keeps monitoring the session for changes in behaviour."
+      ]
+    },
+    {
+      "case": "tampered",
+      "prompt_tokens": 153,
+      "generated_tokens": 48,
+      "ttft_ms": 1170,
+      "prefill_tok_s": 130.8,
+      "decode_tok_s": 12.1,
+      "wall_s": 5.06,
+      "llama_text_used": true,
+      "rejected_because": null,
+      "engine": "Llama 3.2 1B Instruct \u00b7 ExecuTorch (XNNPACK) \u00b7 CPU",
+      "summary": "The EV charger's firmware was modified without the vendor's signature, and the software was released without a known version number. This compromised the charger's integrity and security.",
+      "steps": [
+        "Do not authorise charging on this unit.",
+        "Reflash the latest vendor-signed firmware through the vendor's update tool.",
+        "Keep the evidence report: it records the measured firmware and why it failed."
+      ]
+    },
+    {
+      "case": "vulnerable",
+      "prompt_tokens": 211,
+      "generated_tokens": 34,
+      "ttft_ms": 1456,
+      "prefill_tok_s": 144.9,
+      "decode_tok_s": 12.5,
+      "wall_s": 4.1,
+      "llama_text_used": false,
+      "rejected_because": "Llama explanation not used for this run: explanation plays down a amber verdict",
+      "engine": "rule-based (grounded templates)",
+      "summary": "The charger is genuine and its firmware is authentic, but it contains 2 known vulnerabilities in openssl 1.1.1k, zlib 1.2.11. The most serious is CVE-2021-3711 (CVSS None).",
+      "steps": [
+        "Charging can continue, but schedule a firmware upgrade.",
+        "Ask the vendor for a release that includes: 1.1.1l, 1.2.12.",
+        "Re-verify the charger after the upgrade; it should then show green."
+      ]
+    },
+    {
+      "case": "compromised",
+      "prompt_tokens": 175,
+      "generated_tokens": 58,
+      "ttft_ms": 1242,
+      "prefill_tok_s": 140.9,
+      "decode_tok_s": 14.4,
+      "wall_s": 5.2,
+      "llama_text_used": true,
+      "rejected_because": null,
+      "engine": "Llama 3.2 1B Instruct \u00b7 ExecuTorch (XNNPACK) \u00b7 CPU",
+      "summary": "The EV charger started communicating in ways it shouldn't, using a port scan to connect to a specific IP address. This was done to protect the network, and the charger was isolated from the network as a precaution.",
+      "steps": [
+        "Leave the charger isolated; the session was stopped safely.",
+        "Collect the evidence report and network capture for your security team.",
+        "Reflash vendor firmware and rotate any credentials stored on the unit before reconnecting."
+      ]
+    },
+    {
+      "case": "scam_sms",
+      "prompt_tokens": 218,
+      "generated_tokens": 53,
+      "ttft_ms": 1488,
+      "prefill_tok_s": 146.5,
+      "decode_tok_s": 13.1,
+      "wall_s": 5.46,
+      "llama_text_used": true,
+      "rejected_because": null,
+      "engine": "Llama 3.2 1B Instruct \u00b7 ExecuTorch (XNNPACK) \u00b7 CPU",
+      "summary": "The message is likely a scam because it matches common scam messages and links to a fake website. The message's wording and link to a fake website are red flags that indicate a potential phishing or scam.",
+      "steps": [
+        "Do not reply, call back or open the link.",
+        "Check your account only in the official app or website you normally use.",
+        "Delete the message, or report it as spam to your mobile operator."
+      ]
+    },
+    {
+      "case": "phishing_link",
+      "prompt_tokens": 178,
+      "generated_tokens": 17,
+      "ttft_ms": 1243,
+      "prefill_tok_s": 143.2,
+      "decode_tok_s": 12.5,
+      "wall_s": 2.53,
+      "llama_text_used": false,
+      "rejected_because": "Llama explanation not used for this run: explanation calls it safe, but the verdict is phishing",
+      "engine": "rule-based (grounded templates)",
+      "summary": "Do not open this link. chargepoint-pay.top is very likely a fake page (credential or payment keyword in path; brand name used outside the brand's own domain).",
+      "steps": [
+        "Do not enter card details, passwords or one-time codes on this site.",
+        "Pay only through the charging operator's official app or the charger's own payment terminal.",
+        "If it came from a QR sticker on a charger, report the charger to the site operator."
+      ]
+    },
+    {
+      "case": "genuine_link",
+      "prompt_tokens": 143,
+      "generated_tokens": 31,
+      "ttft_ms": 1130,
+      "prefill_tok_s": 126.5,
+      "decode_tok_s": 12.4,
+      "wall_s": 3.55,
+      "llama_text_used": true,
+      "rejected_because": null,
+      "engine": "Llama 3.2 1B Instruct \u00b7 ExecuTorch (XNNPACK) \u00b7 CPU",
+      "summary": "The message or link is safe because it is from a legitimate source, is on ChargeGuard's list of known official sites, and has a good reputation.",
+      "steps": [
+        "Still check the address bar before entering payment details."
+      ]
+    }
+  ],
+  "note": "Development-host figures, not Raspberry Pi 5. On mains power the same host measured about 25 tok/s decode, 0.6-0.8 s to first token and 260-290 tok/s prefill. Two of seven explanations were rejected by the grounding check and replaced by the grounded template, as designed."
+}

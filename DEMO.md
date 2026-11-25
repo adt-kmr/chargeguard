@@ -14,7 +14,7 @@ by the ChargeGuard gateway observing a real charger process; nothing is replayed
 | Weaknesses (C3) | Firmware bytes audited once at start-up against a curated feed of real CVEs; lookup by hash at plug-in | Same, or Syft + Grype in audit mode |
 | Behaviour (C4) | Inline OCPP transcript + flow records from the tap simulator (`simlab/tap.py`) | Inline OCPP + flows from the network bridge |
 | Enforcement | OCPP `RemoteStopTransaction`, connection closed, device quarantined, authorisation refused; nftables and wolfSentry rules rendered | nftables rules applied on the node |
-| Advisor | Rule-based engine grounded in the evidence, labelled as such on screen | Llama 3.2 1B on ExecuTorch once the model is exported |
+| Advisor | Llama 3.2 1B on ExecuTorch (in WSL, through `advisor/llama_service.py`) explains; steps come from the grounded rules; the grounded text is shown if the explanation fails its checks or the service is not running | Same model in-process on the node Pi |
 | Timing | Checks take milliseconds; the dashboard holds each step to its window so the audience can follow. Real compute time is shown next to every check | Same |
 
 ## Start

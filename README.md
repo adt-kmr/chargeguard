@@ -89,10 +89,10 @@ ChargeGuard applies that brief to one high-value device class. It fits two of th
 | Run entirely on Arm edge hardware, no cloud | Python services on a Raspberry Pi 5 class node; all lookups against local SQLite; offline signing and verification | Verification path runs locally. The dashboard page loads three.js and anime.js from a CDN; bundling them locally is on the [roadmap](#roadmap) |
 | Monitor and classify network traffic for anomalies and intrusions | C4 behaviour monitor: per-charger baseline of peers, ports, message rates and protocol phases; detects port scans, C2 beacons, DNS exfiltration and floods ([`integrations/behavior`](integrations/behavior/baseline.py)) | Rule-based detector implemented and tested against all simulator attack modes. A learned traffic classifier is planned |
 | IoT device behaviour monitoring | Same baseline, plus packet-capture inputs (iotaudit, tshark MQTT) | Implemented as adapters |
-| Explain threats to non-expert users in plain language | [`advisor/`](advisor/engines.py) turns each signed verdict into a plain-language explanation, the risk, and up to three remediation steps, shown on the dashboard and stored in the report | Rule-based engine grounded in the evidence runs today and is labelled as such; the Llama engine is implemented against ExecuTorch's runner and activates when the model is exported |
+| Explain threats to non-expert users in plain language | [`advisor/`](advisor/engines.py) turns each signed verdict into a plain-language explanation, the risk, and up to three remediation steps, shown on the dashboard and stored in the report | **Running.** Llama 3.2 1B on ExecuTorch writes the explanation; risk and steps come from the grounded rule engine; every explanation is checked against the evidence before it is shown, and the grounded text is used if it fails |
 | Recommend remediation actions | Verdict reasons include the action. The behaviour monitor outputs block, isolate or rate-limit and renders a wolfSentry firewall policy | Implemented |
 | Offline threat intelligence | Firmware is audited once (SBOM, CVEs, secrets, hardening) and the result is cached by firmware hash for offline lookup | Implemented in the integration layer |
-| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | `LlamaExecuTorchAdvisor` in [`advisor/engines.py`](advisor/engines.py) runs Llama 3.2 1B Instruct (4-bit SpinQuant) through ExecuTorch's in-process `TextLLMRunner`; [`advisor/export_llama.sh`](advisor/export_llama.sh) produces the `.pte` with the XNNPACK SpinQuant configuration | **ExecuTorch 1.6 toolchain installed and the export verified up to the licence-gated weight download.** The model is exported once the Llama 3.2 licence is accepted and Hugging Face login is done; until then the grounded engine runs and is labelled |
+| **Required: Llama for advisory or reasoning, deployed with ExecuTorch** | `LlamaExecuTorchAdvisor` in [`advisor/engines.py`](advisor/engines.py) runs Llama 3.2 1B Instruct (4-bit SpinQuant) through ExecuTorch's in-process `TextLLMRunner`; [`advisor/export_llama.sh`](advisor/export_llama.sh) produces the `.pte` with the XNNPACK SpinQuant configuration | **Running.** `models/llama3_2_1b.pte` (1.08 GB) exported with ExecuTorch 1.6.0; measured in [`benchmarks/results/llama_advisor_x86_64-linux.json`](benchmarks/results/llama_advisor_x86_64-linux.json): about 25 tok/s decode, 260–290 tok/s prefill, 0.6–0.8 s to first token, 1.8 GB resident on the development host (half that speed on battery). All 11 scenarios pass with Llama active ([`scenario_matrix_llama.json`](benchmarks/results/scenario_matrix_llama.json)) |
 | Detect phishing URLs | [`threatintel/`](threatintel/README.md): hostname model trained on UCI PhiUSIIL (grouped split, no domain overlap) + explicit rules + curated known-good list; also checks the **payment QR code every charger displays** | Implemented: F1 0.750, ROC-AUC 0.888 on 30,093 held-out hostnames; exported to ExecuTorch |
 | Detect scam SMS / fraudulent communications | [`threatintel/`](threatintel/README.md): message model trained on the UCI SMS Spam Collection, with link extraction and per-n-gram explanations; dashboard **Driver Safety Check** | Implemented: F1 0.942, false-positive rate 0.44% on 776 held-out messages; exported to ExecuTorch |
 
@@ -217,7 +217,7 @@ The dashboard's attack panel also composes attacks individually:
 
 | Role | Hardware | Arm core | What runs there |
 |---|---|---|---|
-| ChargeGuard node | Raspberry Pi 5 | 4× Cortex-A76 (Armv8.2-A) | Orchestrator, checks, trust engine, dashboard server, audit cache; planned Llama advisor |
+| ChargeGuard node | Raspberry Pi 5 | 4× Cortex-A76 (Armv8.2-A) | Orchestrator, checks, trust engine, dashboard server, audit cache, Llama advisor (ExecuTorch) |
 | Charger controller (MCU class) | Cortex-M microcontroller; emulated in Renode on the STM32F4 Discovery platform (Cortex-M4) | Cortex-M | Firmware verified by MCUboot or wolfBoot; device identity on an SPI/I2C TPM via wolfTPM; wolfSentry firewall |
 | Charger controller (Linux class) | Arm Linux board (for example a second Raspberry Pi) | Cortex-A | A/B updates via RAUC or SWUpdate; Keylime agent for continuous attestation |
 
@@ -324,7 +324,7 @@ The real work in a verification adds up to about 4 ms; the cryptography is a sma
 |---|---|
 | Latency | The heavy analysis (SBOM, CVE matching, secret search) is moved to audit mode; plug-in time does hash lookups only. The advisor runs after the verdict, never in its path |
 | Compute and power | Plain CPU code with no GPU or always-on accelerator in the verification path. The node idles between plug-in events, and the audit pipeline runs once per firmware version, not per session |
-| Memory | A small SQLite store and a YAML baseline per charger model. A 1B-parameter Llama with 4-bit weights is the planned advisor size, chosen to fit beside the services on a Pi 5 |
+| Memory | A small SQLite store and a YAML baseline per charger model. Llama 3.2 1B with 4-bit SpinQuant weights: a 1.08 GB program, 1.8 GB resident, beside the services on a Pi 5 |
 | Cost | A single Raspberry Pi 5 with a TPM module per site entrance, rather than a server; the optional AI HAT+ is used only if the traffic classifier needs it |
 | Reliability | Each check has a 2-second timeout in the orchestrator, so a hung check yields a failed check, not a hung verdict |
 
@@ -449,6 +449,7 @@ The gateway itself listens for chargers on `ws://<node>:9000/ocpp/<charge-point-
 | `CHARGEGUARD_PORT` | `8000` | Dashboard port |
 | `CHARGEGUARD_NO_BROWSER` | unset | Do not open a browser on start (headless node) |
 | `CHARGEGUARD_LLAMA_PTE`, `_TOKENIZER`, `_RUNNER` | `models/llama3_2_1b.pte`, `models/tokenizer.model`, `models/llama_main` | Llama advisor model, tokenizer and ExecuTorch runner |
+| `CHARGEGUARD_LLAMA_URL` | `http://127.0.0.1:8765` | Local Llama service (`advisor/llama_service.py`), used when ExecuTorch is not in the node's own Python; `off` disables it |
 
 ## Repository layout
 
@@ -458,7 +459,7 @@ config.py          Paths, the 5-second schedule, gateway ports, site addressing
 gateway/           Inline OCPP 1.6 gateway: live C1–C4 checks, monitoring, enforcement, flow collector
 charger/           C10 OCPP 1.6 charger agent (separate process; runs on the charger Pi)
 simlab/            Scenario staging, network tap simulator, headless scenario runner
-advisor/           Plain-language advisor: Llama on ExecuTorch, grounded rule-based fallback, export script
+advisor/           Plain-language advisor: Llama on ExecuTorch, grounding checks, rule-based fallback, export, service, benchmark
 threatintel/       On-device scam-message and phishing-URL detectors, training, ExecuTorch export
 data/              Dataset checksums (raw data is fetched by scripts/fetch_datasets.py, git-ignored)
 audit/             One-time firmware audit (component banners → curated real-CVE feed)
@@ -508,14 +509,14 @@ Each layer has its own documentation: [`attestation/README.md`](attestation/READ
 - Signed, compliance-mapped evidence report (17 controls, five standards)
 - On-device scam-message and phishing-URL detectors with an honest evaluation protocol, exported to ExecuTorch with verified parity
 - Payment-QR ("quishing") check on every charger, and a Driver Safety Check in the dashboard
-- ExecuTorch 1.6 toolchain and the Llama 3.2 1B SpinQuant export path, ready for the licence-gated weights
+- Llama 3.2 1B Instruct (SpinQuant 4-bit) exported to ExecuTorch and running as the advisor, with grounding checks that reject explanations which contradict the evidence
 - TPM 2.0 attestation layer with software, tpm2-tss and Keylime paths, and an IBM TPM emulator launcher
 - Integration adapters for firmware integrity, firmware audit with a per-hash cache, behaviour baseline with block and isolate, SARIF + CycloneDX evidence bundles and a Renode attack lab
 - Hot-path benchmark with committed results
 
 **Next**
 
-- Export Llama 3.2 1B Instruct (SpinQuant) with the prepared script once the licence is accepted, and measure tokens per second on the Pi 5
+- Measure the Llama advisor on the Raspberry Pi 5 (Cortex-A76, KleidiAI) with `advisor/bench_llama.py`
 - Learned traffic classifier (CICIDS2017 / UNSW-NB15 plus charger captures) beside the rule baseline; HailoRT on the AI HAT+ where fitted
 - Hardware path: tpm2-tss backend against a real TPM, packet capture on the node's bridge instead of the tap simulator, nftables rules applied
 - Persistent SQLite connections on the hot path

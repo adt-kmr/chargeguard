@@ -136,8 +136,7 @@ async def check_message(req: MessageCheck):
     """Scam-message and embedded-link check, with the advisor's explanation."""
     from threatintel import analyse_message
     result = await asyncio.to_thread(analyse_message, req.text[:2000])
-    result["advisory"] = (await asyncio.to_thread(gateway.advisor.explain_threat, result)).to_dict()
-    return result
+    return _with_fast_advisory(result)
 
 
 @app.post("/api/threat/url")
@@ -145,8 +144,34 @@ async def check_url(req: UrlCheck):
     """Phishing check for a link or a scanned QR-code payload."""
     from threatintel import analyse_url
     result = await asyncio.to_thread(analyse_url, req.url[:2000])
-    result["advisory"] = (await asyncio.to_thread(gateway.advisor.explain_threat, result)).to_dict()
+    return _with_fast_advisory(result)
+
+
+# The verdict and grounded steps return instantly; when Llama is available its explanation is
+# fetched in a second request, so the driver never waits on text generation.
+_PENDING: dict[str, dict] = {}
+
+
+def _with_fast_advisory(result: dict) -> dict:
+    adv = gateway.advisor.explain_threat_fast(result)
+    result["advisory"] = adv.to_dict()
+    if adv.fallback_reason == "Llama explanation pending":
+        key = uuid.uuid4().hex
+        _PENDING[key] = result
+        while len(_PENDING) > 64:
+            _PENDING.pop(next(iter(_PENDING)))
+        result["explain_id"] = key
     return result
+
+
+@app.get("/api/threat/explain/{key}")
+async def explain_threat(key: str):
+    """Llama's plain-language explanation for an earlier check (grounded fallback on failure)."""
+    result = _PENDING.pop(key, None)
+    if result is None:
+        raise HTTPException(404, "unknown or expired check")
+    adv = await asyncio.to_thread(gateway.advisor.explain_threat, {k: v for k, v in result.items() if k != "advisory"})
+    return adv.to_dict()
 
 
 @app.get("/api/report/{session_id}")
