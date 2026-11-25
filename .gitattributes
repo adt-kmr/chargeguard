@@ -1,0 +1,6 @@
+# Files that run on Linux (the Raspberry Pis) must keep LF line endings on every checkout
+*.sh text eol=lf
+*.service text eol=lf
+*.netdev text eol=lf
+*.network text eol=lf
+deploy/pi/node/chargeguard.env text eol=lf
