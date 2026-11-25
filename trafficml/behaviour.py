@@ -150,7 +150,7 @@ class BehaviourModel:
 
 
 def fit(healthy_windows: list[list[dict]], window_s: float = 10.0, epochs: int = 60, seed: int = 3,
-        out: Path = WEIGHTS, quantile: float = 0.999, margin: float = 1.25) -> dict:
+        out: Path = WEIGHTS, quantile: float = 0.999, margin: float = 1.6) -> dict:
     """Train on healthy windows: 85% for the autoencoder, 15% to set the threshold."""
     import torch
     rng = np.random.default_rng(seed)

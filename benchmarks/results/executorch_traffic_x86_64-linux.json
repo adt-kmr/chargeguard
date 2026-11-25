@@ -1,0 +1,28 @@
+{
+  "torch": "2.15.0+cpu",
+  "host": {
+    "machine": "x86_64",
+    "os": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39"
+  },
+  "backend": "XNNPACK",
+  "flow_mlp": {
+    "pte_bytes": 58116,
+    "samples": 61,
+    "max_abs_diff_vs_numpy": 7.078051567077637e-08,
+    "decision_agreement": 1.0,
+    "latency_ms": {
+      "p50": 0.0969,
+      "p95": 0.105
+    }
+  },
+  "behaviour_ae": {
+    "pte_bytes": 8272,
+    "samples": 26,
+    "max_abs_diff_vs_numpy": 9.5367431640625e-07,
+    "decision_agreement": 1.0,
+    "latency_ms": {
+      "p50": 0.0543,
+      "p95": 0.0642
+    }
+  }
+}

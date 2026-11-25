@@ -135,12 +135,14 @@ def main():
     hs = np.array([model.analyse(w, WINDOW)["score"] for w in hw])
     res = {"window_s": WINDOW, "threshold": model.threshold, "train": {k: v for k, v in info.items() if k not in ("known_peers",)},
            "healthy_test": {"windows": len(hw), "false_alarms": int((hs > model.threshold).sum()),
+                            "max_score_vs_threshold": round(float(hs.max() / model.threshold), 2),
                             "false_alarm_rate": round(float((hs > model.threshold).mean()), 5),
                             "rules_false_alarms": int(sum(rules_flag(w, base) for w in hw))},
            "attacks": {}}
     rnd = random.Random(5)
     for kind in ATTACKS:
         det = rule = 0
+        scores = []
         whys = Counter_ = {}
         trials = 40
         for k in range(trials):
@@ -149,12 +151,14 @@ def main():
             recs = to_records(bg + attack_frames(kind, t, rnd))
             w = [r for r in recs if t - 0.5 <= r["nf"]["LAST_SWITCHED"] < t + WINDOW - 0.5]
             a = model.analyse(w, WINDOW)
+            scores.append(a["score"])
             det += a["anomalous"]
             rule += rules_flag(w, base)
             for y in a["why"][:1]:
                 whys[y["meaning"] + f" ({y['direction']})"] = whys.get(y["meaning"] + f" ({y['direction']})", 0) + 1
         res["attacks"][kind] = {"novel": kind in NOVEL, "windows": trials, "model_detection": round(det / trials, 3),
                                 "rules_detection": round(rule / trials, 3),
+                                "min_score_vs_threshold": round(min(scores) / model.threshold, 2),
                                 "top_reason": max(whys, key=whys.get) if whys else None}
         print(kind, res["attacks"][kind])
     del Counter_

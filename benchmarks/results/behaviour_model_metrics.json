@@ -1,8 +1,8 @@
 {
   "window_s": 10.0,
-  "threshold": 0.6623442769050598,
+  "threshold": 0.8478006720542908,
   "train": {
-    "threshold": 0.6623442783951765,
+    "threshold": 0.8478006763458259,
     "known_ports": [
       53,
       123,
@@ -12,12 +12,13 @@
     "window_s": 10.0,
     "train_windows": 6113,
     "threshold_windows": 1079,
-    "threshold_rule": "0.999 quantile x 1.25",
+    "threshold_rule": "0.999 quantile x 1.6",
     "healthy_validation_max": 0.7220016717910767
   },
   "healthy_test": {
     "windows": 1796,
     "false_alarms": 0,
+    "max_score_vs_threshold": 0.31,
     "false_alarm_rate": 0.0,
     "rules_false_alarms": 20
   },
@@ -27,6 +28,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 14.91,
       "top_reason": "number of destination ports (higher)"
     },
     "c2_beacon": {
@@ -34,6 +36,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 1.4,
       "top_reason": "regular, beacon-like timing (higher)"
     },
     "dns_tunnel": {
@@ -41,6 +44,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 43.99,
       "top_reason": "connection rate (higher)"
     },
     "ocpp_flood": {
@@ -48,6 +52,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 0.0,
+      "min_score_vs_threshold": 19.19,
       "top_reason": "OCPP packet rate (higher)"
     },
     "slow_scan": {
@@ -55,6 +60,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 2.18,
       "top_reason": "number of destination ports (higher)"
     },
     "slow_dns_tunnel": {
@@ -62,6 +68,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 0.0,
+      "min_score_vs_threshold": 1.38,
       "top_reason": "regular, beacon-like timing (higher)"
     },
     "https_exfil": {
@@ -69,6 +76,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 64.88,
       "top_reason": "upload/download ratio (higher)"
     },
     "ssh_bruteforce": {
@@ -76,6 +84,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 3.85,
       "top_reason": "download rate (higher)"
     },
     "unexpected_service": {
@@ -83,6 +92,7 @@
       "windows": 40,
       "model_detection": 1.0,
       "rules_detection": 1.0,
+      "min_score_vs_threshold": 1.79,
       "top_reason": "regular, beacon-like timing (higher)"
     }
   }

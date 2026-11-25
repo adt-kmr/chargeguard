@@ -76,6 +76,7 @@ service-account*.json
 tokenizer.model
 # ...except the small threat-detector programs, which are part of the product
 !/threatintel/weights/*.pte
+!/trafficml/weights/*.pte
 
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
