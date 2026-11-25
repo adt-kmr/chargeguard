@@ -123,3 +123,7 @@ desktop.ini
 
 # Hydra run logs written by the ExecuTorch LLM export
 /outputs/
+
+# Dashboard libraries bundled for offline (air-gapped) nodes
+!/dashboard/static/vendor/
+!/dashboard/static/vendor/**
