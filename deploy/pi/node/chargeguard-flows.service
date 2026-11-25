@@ -1,0 +1,24 @@
+[Unit]
+Description=ChargeGuard flow exporter: packets on the charger-facing bridge port -> NetFlow records
+After=chargeguard-node.service
+Requires=chargeguard-node.service
+
+[Service]
+Type=simple
+User=chargeguard
+EnvironmentFile=/etc/default/chargeguard
+WorkingDirectory=/opt/chargeguard/app
+# 1 s active timeout: long-lived flows (the OCPP WebSocket) are reported every second for live monitoring
+ExecStart=/opt/chargeguard/venv/bin/python -m netflow.exporter --iface ${CHARGEGUARD_CHARGER_PORT} --active 1 --idle 2
+Restart=on-failure
+RestartSec=3
+# raw packet capture only
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

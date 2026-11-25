@@ -86,8 +86,8 @@ ChargeGuard applies that brief to one high-value device class. It fits two of th
 
 | Challenge requirement | ChargeGuard component | Status today |
 |---|---|---|
-| Run entirely on Arm edge hardware, no cloud | Python services on a Raspberry Pi 5 class node; all lookups against local SQLite; offline signing and verification | Verification path runs locally. The dashboard page loads three.js and anime.js from a CDN; bundling them locally is on the [roadmap](#roadmap) |
-| Monitor and classify network traffic for anomalies and intrusions | C4 behaviour monitor: per-charger baseline of peers, ports, message rates and protocol phases; detects port scans, C2 beacons, DNS exfiltration and floods ([`integrations/behavior`](integrations/behavior/baseline.py)) | Rule-based detector implemented and tested against all simulator attack modes. A learned traffic classifier is planned |
+| Run entirely on Arm edge hardware, no cloud | Python services on a Raspberry Pi 5 class node; all lookups against local SQLite; offline signing and verification Runs locally, including the dashboard: three.js and anime.js are bundled under [`dashboard/static/vendor`](dashboard/static/vendor), so the node needs no network beyond the charger and site. Raspberry Pi install kit in [`deploy/pi`](deploy/pi/README.md) |
+| Monitor and classify network traffic for anomalies and intrusions | C4 behaviour monitor: per-charger baseline of peers, ports, message rates and protocol phases; detects port scans, C2 beacons, DNS exfiltration and floods ([`integrations/behavior`](integrations/behavior/baseline.py)) | **Rules plus two learned models.** A flow classifier trained on NF-UNSW-NB15 and a learned per-charger baseline (autoencoder over 10-second windows) run in the behaviour check, both exported to ExecuTorch ([`trafficml/`](trafficml/README.md)). Packets are captured on the node's bridge by [`netflow/`](netflow/) |
 | IoT device behaviour monitoring | Same baseline, plus packet-capture inputs (iotaudit, tshark MQTT) | Implemented as adapters |
 | Explain threats to non-expert users in plain language | [`advisor/`](advisor/engines.py) turns each signed verdict into a plain-language explanation, the risk, and up to three remediation steps, shown on the dashboard and stored in the report | **Running.** Llama 3.2 1B on ExecuTorch writes the explanation; risk and steps come from the grounded rule engine; every explanation is checked against the evidence before it is shown, and the grounded text is used if it fails |
 | Recommend remediation actions | Verdict reasons include the action. The behaviour monitor outputs block, isolate or rate-limit and renders a wolfSentry firewall policy | Implemented |
@@ -230,15 +230,15 @@ The dashboard's attack panel also composes attacks individually:
 
 ### On-device AI: two separate pipelines
 
-| | Advisor (required technology) | Threat detectors | Traffic classifier (optional accelerator) |
+| | Advisor (required technology) | Threat detectors | Traffic models |
 |---|---|---|---|
-| Status | Toolchain installed and export script verified; weights pending licence acceptance | **Built, evaluated and exported to ExecuTorch** | Planned |
-| Model | Llama 3.2 1B Instruct, 4-bit SpinQuant | Two linear models over hashed n-grams (scam messages, phishing hostnames) | Compact classifier on CICIDS2017 / UNSW-NB15 flow features plus recorded charger baselines |
-| Runtime | ExecuTorch `TextLLMRunner`, XNNPACK backend (KleidiAI micro-kernels on Arm) | ExecuTorch `.pte` (embedding-lookup network) or the identical NumPy path | HailoRT on the AI HAT+ NPU when fitted; otherwise ExecuTorch on the CPU |
-| Compute unit | Cortex-A76 CPU | Cortex-A76 CPU | Hailo NPU, or the Cortex-A76 CPU |
-| Input | Verdict, per-check findings, CVEs, anomalies, detector results (structured JSON) | Message text, links, QR payloads | Flow features from the behaviour monitor |
-| Output | Plain-language explanation and up to three remediation steps, grounded only in the facts given | Score, decision and the n-grams and rules behind it | Anomaly score feeding C4 alongside the rule baseline |
-| Place in the 5-second budget | Outside it: runs after the verdict is signed | Inside it: the charger's payment QR is checked during verification | Inside the C4 window |
+| Status | **Running** (development host); Pi 5 measurement next | **Built, evaluated and exported to ExecuTorch** | **Built, evaluated and exported to ExecuTorch** |
+| Model | Llama 3.2 1B Instruct, 4-bit SpinQuant | Two linear models over hashed n-grams (scam messages, phishing hostnames) | Flow classifier (MLP 39-128-64-1, NF-UNSW-NB15) and learned per-charger baseline (autoencoder 20-12-6-12-20, the charger's healthy traffic) |
+| Runtime | ExecuTorch `TextLLMRunner`, XNNPACK backend (KleidiAI micro-kernels on Arm) | ExecuTorch `.pte` (embedding-lookup network) or the identical NumPy path | ExecuTorch `.pte` (XNNPACK) or the identical NumPy path; HailoRT on the AI HAT+ is optional and not needed at this size |
+| Compute unit | Cortex-A76 CPU | Cortex-A76 CPU | Cortex-A76 CPU |
+| Input | Verdict, per-check findings, CVEs, anomalies, detector results (structured JSON) | Message text, links, QR payloads | NetFlow records from the node's bridge ([`netflow/`](netflow/)) |
+| Output | A two-sentence explanation, checked against the evidence before it is shown; steps come from the grounded rules | Score, decision and the n-grams and rules behind it | Per-flow attack score with the features behind it; window anomaly score with the features furthest from this charger's normal |
+| Place in the 5-second budget | Outside it: the verdict and enforcement are applied first | Inside it: the charger's payment QR is checked during verification | Flow classifier inside the C4 window; the learned baseline once a full 10-second window exists, then every second |
 
 The pipelines are independent. Llama never runs on the Hailo NPU, and neither detector depends on Llama.
 
@@ -274,6 +274,30 @@ ExecuTorch programs ([`benchmarks/results/executorch_detectors_x86_64-linux.json
 |---|---|---|---|---|
 | `sms_scam.pte` (300 real messages) | 2.1 MB | 5.0×10⁻⁵ | 100% | 0.012 / 0.013 ms |
 | `phishing_url.pte` | 1.05 MB | 1.2×10⁻⁷ | 100% | 0.013 / 0.015 ms |
+
+### Measured: traffic models
+
+Protocol and caveats in [`trafficml/README.md`](trafficml/README.md). The flow classifier is evaluated on NF-UNSW-NB15 with duplicates removed before splitting and without addresses, source ports, TTL or exotic protocol numbers, which identify the testbed rather than the behaviour ([`traffic_classifier_metrics.json`](benchmarks/results/traffic_classifier_metrics.json)):
+
+| Model | Test | ROC-AUC | Precision | Recall | False-positive rate |
+|---|---|---|---|---|---|
+| Flow classifier (MLP, deployed) | 50,753 unique flows | 0.988 | 0.950 | 0.541 | 0.46% |
+| Gradient-boosted trees (reference) | same | 0.991 | 0.954 | 0.607 | 0.47% |
+
+Recall on attack categories withheld from training: Reconnaissance 0.52, DoS 0.52, Generic 0.58, Exploits 0.35, Fuzzers 0.05. Per flow, the classifier barely sees charger-specific attacks (a scan probe or a beacon is an ordinary short flow, [`traffic_classifier_charger_sim.json`](benchmarks/results/traffic_classifier_charger_sim.json)), so on its own it never fails a charger that talks only to approved peers.
+
+The learned per-charger baseline is fitted on healthy traffic only. In simulation, built as real packets and aggregated by the node's flow table ([`behaviour_model_metrics.json`](benchmarks/results/behaviour_model_metrics.json)):
+
+| | Learned baseline | Hand-written rules (flows only) |
+|---|---|---|
+| False alarms, 1,796 unseen healthy 10-s windows | **0** | 20 (a firmware-update check on a port the rules do not list) |
+| Port scan, C2 beacon, DNS tunnel, HTTPS exfiltration, SSH brute force, slow scan, Modbus to a LAN PLC | 100% of windows | 100% |
+| OCPP flood | 100% | 0% from flows (the OCPP rate rule catches it on the transcript) |
+| Slow DNS tunnel through the approved resolver | **100%** | 0% |
+
+These figures come from synthetic traffic; on the Pi the baseline is refitted on the real charger's enrolment capture ([`deploy/pi/README.md`](deploy/pi/README.md)).
+
+ExecuTorch programs ([`executorch_traffic_x86_64-linux.json`](benchmarks/results/executorch_traffic_x86_64-linux.json), development host, not the Arm target): `flow_mlp.pte` 58 KB, 0.10 ms p50; `behaviour_ae.pte` 8 KB, 0.05 ms p50; both agree with the NumPy models on every decision (max difference ≤ 1×10⁻⁶).
 
 ### Measured: component micro-benchmarks
 
@@ -383,18 +407,24 @@ On first run, `main.py`:
 
 Generated files (`db/*.db`, `firmware/images/`, `firmware/keys/`, `evidence/reports/`) stay local and are not committed.
 
+**On Raspberry Pis.** [`deploy/pi/README.md`](deploy/pi/README.md) installs the node (inline bridge, packet capture, nftables, node mode) and a charger controller with a hardware TPM, and `scripts/pi_preflight.py` checks each board before it goes live.
+
 **Tests**
 
 ```bash
 python -m pytest tests
 ```
-47 tests cover:
+85 tests cover:
 
 - end to end: a real charger process over OCPP 1.6 against the live gateway for the healthy, tampered, vulnerable, clone, mid-session compromise and quishing scenarios, including signed-report verification ([`tests/test_live_gateway.py`](tests/test_live_gateway.py); stop the dashboard first, both use ports 9000 and 9100)
 - the scam-message and phishing-URL detectors, their explanations, the known-good list and the published metrics
 - the attestation layer
 - the behaviour baseline against every simulator attack mode
 - the wolfSentry policy output
+- packet parsing, flow aggregation, pcap round trips and the exporter ([`tests/test_netflow.py`](tests/test_netflow.py))
+- the traffic models and their place in the behaviour check, including the warm-up rule and that the flow classifier alone never fails an approved peer ([`tests/test_trafficml.py`](tests/test_trafficml.py))
+- the Llama advisor's grounding checks, with no model needed ([`tests/test_advisor_grounding.py`](tests/test_advisor_grounding.py))
+- the Raspberry Pi paths: nftables rendering and address validation, measured launch into PCR 23, enrolment import, quarantine persistence in node mode ([`tests/test_deploy_paths.py`](tests/test_deploy_paths.py))
 - tool-output parsers and the per-firmware audit cache
 - wolfBoot digest checks
 - SARIF output and evidence-bundle tamper detection
@@ -430,7 +460,10 @@ Lists each external tool, whether it was found, and how to build or install it. 
 | GET | `/api/report/{session_id}` | Signed evidence report (JSON) |
 | GET | `/api/report/{session_id}/verify` | Checks the report's Ed25519 signature and that its body is unmodified |
 | GET | `/api/session/{session_id}` | Session status |
-| GET | `/api/status` | Gateway endpoint, advisor engine, active session, quarantined chargers |
+| GET | `/api/status` | Gateway endpoint, advisor engine, active session, node mode, quarantined chargers |
+| POST | `/api/quarantine/{device_id}/release` | Operator action: lift a quarantine (and its nftables rules) after the charger is repaired |
+| POST | `/api/threat/message`, `/api/threat/url` | Driver Safety Check: verdict and grounded steps at once, plus an `explain_id` |
+| GET | `/api/threat/explain/{explain_id}` | Llama's explanation for that check (grounded fallback if it fails the evidence check) |
 
 The gateway itself listens for chargers on `ws://<node>:9000/ocpp/<charge-point-id>` (OCPP 1.6-J) and for flow records on `udp/9100`.
 
@@ -450,6 +483,11 @@ The gateway itself listens for chargers on `ws://<node>:9000/ocpp/<charge-point-
 | `CHARGEGUARD_NO_BROWSER` | unset | Do not open a browser on start (headless node) |
 | `CHARGEGUARD_LLAMA_PTE`, `_TOKENIZER`, `_RUNNER` | `models/llama3_2_1b.pte`, `models/tokenizer.model`, `models/llama_main` | Llama advisor model, tokenizer and ExecuTorch runner |
 | `CHARGEGUARD_LLAMA_URL` | `http://127.0.0.1:8765` | Local Llama service (`advisor/llama_service.py`), used when ExecuTorch is not in the node's own Python; `off` disables it |
+| `CHARGEGUARD_NODE_MODE` | `demo` | `node` on the Raspberry Pi: a verification opens whenever a real charger connects, quarantines persist, the dashboard follows each session |
+| `CHARGEGUARD_OCPP_HOST`, `_FLOW_HOST` | `127.0.0.1` | Gateway and flow-collector bind addresses (`0.0.0.0` for the OCPP gateway on the node) |
+| `CHARGEGUARD_NODE_IP`, `_CHARGER_IP` | `10.20.0.1`, `10.20.0.15` | Site addressing used by the baseline, the flow records and enforcement |
+| `CHARGEGUARD_MEASURED_PCR` | `0` | PCR holding the charger's firmware measurement; `23` with a hardware TPM (reset, then extend, at every launch) |
+| `CHARGEGUARD_FIREWALL` | `render` | nftables enforcement: `render` (record only), `check` (`nft --check`), `apply` (enforce on the bridge) |
 
 ## Repository layout
 
@@ -460,6 +498,9 @@ gateway/           Inline OCPP 1.6 gateway: live C1–C4 checks, monitoring, enf
 charger/           C10 OCPP 1.6 charger agent (separate process; runs on the charger Pi)
 simlab/            Scenario staging, network tap simulator, headless scenario runner
 advisor/           Plain-language advisor: Llama on ExecuTorch, grounding checks, rule-based fallback, export, service, benchmark
+netflow/           Packet capture on the bridge (AF_PACKET, pcap), flow table, NetFlow exporter, packet synthesiser
+trafficml/         Flow classifier and learned per-charger baseline: features, training, evaluation, ExecuTorch export
+deploy/pi/         Raspberry Pi kit: node and charger install scripts, systemd services, bridge network, TPM overlay
 threatintel/       On-device scam-message and phishing-URL detectors, training, ExecuTorch export
 data/              Dataset checksums (raw data is fetched by scripts/fetch_datasets.py, git-ignored)
 audit/             One-time firmware audit (component banners → curated real-CVE feed)
@@ -474,7 +515,7 @@ db/                SQLite registry: firmware, CVEs, identities, attestation keys
 attestation/       C1 TPM 2.0 attestation: backends, verifiers, emulator launcher
 integrations/      C2–C4, C7, C9 adapters for the vendored security tools
 benchmarks/        Hot-path benchmark and committed results
-scripts/           Dataset fetcher and asset preparation (dashboard 3D vehicle model)
+scripts/           Dataset fetcher, Raspberry Pi preflight check, media and asset preparation
 tests/             pytest suite
 vendor/            Vendored open-source tools, grouped by capability
 ```
@@ -513,14 +554,18 @@ Each layer has its own documentation: [`attestation/README.md`](attestation/READ
 - TPM 2.0 attestation layer with software, tpm2-tss and Keylime paths, and an IBM TPM emulator launcher
 - Integration adapters for firmware integrity, firmware audit with a per-hash cache, behaviour baseline with block and isolate, SARIF + CycloneDX evidence bundles and a Renode attack lab
 - Hot-path benchmark with committed results
+- Packet capture and NetFlow export for the node's bridge; the simulator now produces real packets through the same flow table
+- Learned traffic models in the behaviour check (flow classifier on NF-UNSW-NB15, learned per-charger baseline), exported to ExecuTorch
+- nftables enforcement with validated addresses (`render`, `check`, `apply`), operator release of quarantines
+- Hardware-TPM charger path: measured launch into PCR 23, enrolment export and import
+- Node mode for the Raspberry Pi, install kit, systemd services and a preflight check; dashboard libraries bundled for offline use
 
 **Next**
 
 - Measure the Llama advisor on the Raspberry Pi 5 (Cortex-A76, KleidiAI) with `advisor/bench_llama.py`
-- Learned traffic classifier (CICIDS2017 / UNSW-NB15 plus charger captures) beside the rule baseline; HailoRT on the AI HAT+ where fitted
-- Hardware path: tpm2-tss backend against a real TPM, packet capture on the node's bridge instead of the tap simulator, nftables rules applied
+- First boot on hardware: run `scripts/pi_preflight.py`, the tpm2-tss path on a real TPM, `nft --check` then `apply` on the bridge, live capture on `eth1`
+- Refit the learned baseline on the real charger's enrolment capture and measure its false-alarm rate over days
 - Persistent SQLite connections on the hot path
-- Bundle the dashboard's JavaScript libraries for fully air-gapped operation
 - Run the benchmark on the Raspberry Pi 5, and profile with Arm Performance Studio
 - Hardware demo: a Pi 5 node with an SPI TPM, and a second board or Renode-emulated Cortex-M as the charger
 

@@ -1,0 +1,8 @@
+# The node's own address: the charger's OCPP endpoint, NTP and DNS resolver.
+# Add DHCP=yes (or a second Address=) if the node also needs a site address.
+[Match]
+Name=br0
+
+[Network]
+Address=10.20.0.1/24
+ConfigureWithoutCarrier=yes

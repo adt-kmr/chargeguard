@@ -96,3 +96,25 @@ when fetched.
 
 Modifications made to snapshots are listed in `vendor/README.md` and
 `vendor/tpm/README.md`.
+
+
+## Traffic-model training data
+
+**NF-UNSW-NB15** (NetFlow v1) and **NF-UNSW-NB15-v2**, University of Queensland,
+https://staff.itee.uq.edu.au/marius/NIDS_datasets/. Licence: permitted re-use with a
+commercial-use restriction; academic use is granted after citing:
+
+- M. Sarhan, S. Layeghy, N. Moustafa, M. Portmann. NetFlow Datasets for Machine
+  Learning-Based Network Intrusion Detection Systems. BDTA 2020 / WiCON 2020, Springer, 2021.
+- M. Sarhan, S. Layeghy, M. Portmann. Towards a Standard Feature Set for Network Intrusion
+  Detection System Datasets. Mobile Networks and Applications, 2022.
+
+Derived from UNSW-NB15 (N. Moustafa, J. Slay, 2015). The raw data is not redistributed;
+`scripts/fetch_datasets.py` downloads it and checks its SHA-256. Commercial use of models
+trained on it needs the authors' agreement.
+
+## Bundled dashboard libraries
+
+- **three.js** 0.158.0 (core, OrbitControls, GLTFLoader, RoomEnvironment, BufferGeometryUtils),
+  MIT licence, copyright 2010-2023 three.js authors: `dashboard/static/vendor/three@0.158.0/`.
+- **anime.js** 3.2.1, MIT licence, copyright Julian Garnier: `dashboard/static/vendor/animejs@3.2.1/`.

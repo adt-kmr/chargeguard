@@ -1,0 +1,6 @@
+# @UPLINK@ (site switch) and @CHARGER@ (charger) are ports of br0; they carry no address
+[Match]
+Name=@UPLINK@ @CHARGER@
+
+[Network]
+Bridge=br0

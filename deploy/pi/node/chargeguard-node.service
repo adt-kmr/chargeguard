@@ -1,0 +1,24 @@
+[Unit]
+Description=ChargeGuard node: OCPP gateway, verification, learned monitoring, dashboard
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chargeguard
+EnvironmentFile=/etc/default/chargeguard
+WorkingDirectory=/opt/chargeguard/app
+ExecStart=/opt/chargeguard/venv/bin/python main.py
+Restart=on-failure
+RestartSec=3
+# nftables enforcement on the bridge; nothing else needs privileges
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/chargeguard/app/db /opt/chargeguard/app/evidence /opt/chargeguard/app/audit /opt/chargeguard/app/firmware
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

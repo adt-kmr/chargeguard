@@ -1,0 +1,24 @@
+[Unit]
+Description=ChargeGuard demo charger: OCPP 1.6 agent with a hardware TPM (measured launch into PCR 23)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chargeguard
+WorkingDirectory=/opt/chargeguard-charger/app
+Environment=CHARGEGUARD_TPM_BACKEND=tpm2-tss
+Environment=CHARGEGUARD_TPM_TCTI=device:/dev/tpmrm0
+Environment=CHARGEGUARD_MEASURED_PCR=23
+# plug in, charge for 10 minutes, unplug; systemd plugs in again after 30 s
+ExecStart=/opt/chargeguard-charger/venv/bin/python charger/agent.py --host 10.20.0.1 --port 9000 --session-seconds 600
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/chargeguard-charger/app/firmware
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

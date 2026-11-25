@@ -1,0 +1,4 @@
+# ChargeGuard: the node bridges the charger to the site network, so every packet passes it
+[NetDev]
+Name=br0
+Kind=bridge
