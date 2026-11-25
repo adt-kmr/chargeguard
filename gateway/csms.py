@@ -253,8 +253,10 @@ class Gateway:
             return checks.check_weaknesses(state.get("resp"))
 
         async def behaviour():
+            flows, span = session.window_flows(BEHAVIOUR_WINDOW_S)
             return checks.check_behaviour(session.behaviour_records(BEHAVIOUR_WINDOW_S), BEHAVIOUR_WINDOW_S,
-                                          session.prior_messages(BEHAVIOUR_WINDOW_S), session.qr_anomalies())
+                                          session.prior_messages(BEHAVIOUR_WINDOW_S), session.qr_anomalies(),
+                                          flows=flows, span_s=span)
 
         r_id = await self._paced(session, "identity", identity)
         for name, fn in (("integrity", integrity), ("weaknesses", weaknesses), ("behavior", behaviour)):
@@ -291,8 +293,9 @@ class Gateway:
                 if not session.verdict_ready.is_set():
                     continue
                 records = session.behaviour_records(BEHAVIOUR_WINDOW_S)
+                flows, span = session.window_flows(BEHAVIOUR_WINDOW_S)
                 result = checks.check_behaviour(records, BEHAVIOUR_WINDOW_S, session.prior_messages(BEHAVIOUR_WINDOW_S),
-                                                session.qr_anomalies())
+                                                session.qr_anomalies(), flows=flows, span_s=span)
                 session.emit("monitor", status="suspicious" if result.status == "fail" else "normal",
                              anomalies=result.evidence["anomalies"][:6], records=len(records),
                              window_s=BEHAVIOUR_WINDOW_S, compute_ms=result.evidence.get("compute_ms"))

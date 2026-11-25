@@ -46,4 +46,4 @@ phases:
 enforcement:
   # unexpected peer / port -> block that peer; severe pattern -> isolate the charger
   isolate_on: [c2-pattern, port-scan, exfiltration, unauthorized-extension]
-  block_on: [unexpected-peer, unexpected-port, rate-exceeded, plaintext]
+  block_on: [unexpected-peer, unexpected-port, rate-exceeded, plaintext, learned-baseline, ml-flow]

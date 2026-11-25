@@ -120,6 +120,14 @@ class Session:
         return [f.action for f in self.transcript
                 if f.direction == "in" and f.kind == "CALL" and now - f.t > window_s]
 
+    def window_flows(self, window_s: float = 10.0) -> tuple[list[dict], float]:
+        """The charger's raw NetFlow records from the last `window_s` seconds, and how many seconds
+        of traffic have been observed so far (the learned baseline needs a full window)."""
+        now = time.monotonic()
+        mine = [f for f in self.flows if f.get("src") == SITE["charger_ip"] and isinstance(f.get("nf"), dict)]
+        span = min(window_s, now - mine[0]["rx"]) if mine else 0.0
+        return [f for f in mine if now - f["rx"] <= window_s], span
+
     def behaviour_records(self, window_s: float = 10.0) -> list[dict]:
         """OCPP calls and tap flows from the last `window_s` seconds, as baseline flow records."""
         now = time.monotonic()

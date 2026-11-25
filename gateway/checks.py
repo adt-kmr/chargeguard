@@ -144,20 +144,62 @@ def check_weaknesses(resp: dict | None) -> CheckResult:
                        f"{len(cves)} known CVE(s) in this firmware ({crit} critical). Authentic but vulnerable.", ev)
 
 
+def _learned(flows: list[dict], window_s: float, span_s: float) -> tuple[list[dict], dict]:
+    """The two learned traffic models on this window: anomalies that should fail the check, and evidence."""
+    from trafficml import behaviour, detector
+    anomalies, ev = [], {}
+    clf = detector.default()
+    if clf and flows:
+        r = clf.analyse(flows)
+        off_baseline = [h for h in r["hits"] if h["peer"] and _BASELINE.peer_for(h["peer"]) is None]
+        ev["flow_classifier"] = {"model": "MLP 39-128-64-1 on NF-UNSW-NB15 (NetFlow v1)", "scored": r["scored"],
+                                 "hits": r["hits"][:5], "max_score": r["max_score"], "threshold": round(clf.threshold, 4),
+                                 "compute_ms": r["compute_ms"]}
+        for peer in sorted({h["peer"] for h in off_baseline}):
+            h = max((x for x in off_baseline if x["peer"] == peer), key=lambda x: x["score"])
+            why = ", ".join(w["meaning"] for w in h["why"][:2])
+            anomalies.append({"rule": "ml-flow", "severity": "medium", "peer": peer,
+                              "message": f"Flow to {peer}:{h['dport']} resembles attack traffic "
+                                         f"(score {h['score']:.2f}; {why})"})
+    model = behaviour.default()
+    if model and flows:
+        if span_s < 0.9 * model.window_s:
+            ev["learned_baseline"] = {"status": "warming up", "observed_s": round(span_s, 1), "needs_s": model.window_s}
+        else:
+            r = model.analyse(flows, window_s)
+            ev["learned_baseline"] = {"model": "autoencoder 20-12-6-12-20 on this charger's healthy windows", **r}
+            if r["anomalous"]:
+                novel = sorted({f["dst"] for f in flows if f["dst"] not in model.known_peers})
+                why = "; ".join(f"{w['meaning']} {w['direction']} than usual" for w in r["why"][:2])
+                anomalies.append({"rule": "learned-baseline", "severity": "high", "peer": novel[0] if novel else None,
+                                  "message": f"Traffic deviates from this charger's learned baseline "
+                                             f"(score {r['score']:.2f} > {r['threshold']:.2f}): {why}"})
+    return anomalies, ev
+
+
 def check_behaviour(records: list[dict], window_s: float, prior_messages: list[str] = (),
-                    extra_anomalies: list[dict] | None = None) -> CheckResult:
-    """extra_anomalies: findings from other detectors on this charger (e.g. a phishing payment QR)."""
+                    extra_anomalies: list[dict] | None = None, flows: list[dict] | None = None,
+                    span_s: float | None = None) -> CheckResult:
+    """extra_anomalies: findings from other detectors on this charger (e.g. a phishing payment QR).
+    flows: the raw NetFlow records of the window, for the learned traffic models."""
     t0 = time.perf_counter()
     report = _BASELINE.evaluate(records, start_phase=_BASELINE.phase_reached(prior_messages))
+    learned_anomalies, learned_ev = _learned(flows or [], window_s, window_s if span_s is None else span_s)
     anomalies = [{"rule": a.rule, "message": a.message, "peer": a.peer, "severity": a.severity}
-                 for a in report.anomalies[:12]] + list(extra_anomalies or [])
+                 for a in report.anomalies[:12]] + learned_anomalies + list(extra_anomalies or [])
     action = "isolate" if extra_anomalies else report.action.value
+    blocked = list(report.blocked_peers)
+    if learned_anomalies and action == "none":
+        action = "block"                                    # learned signals alone block peers, never isolate
+        blocked = sorted({a["peer"] for a in learned_anomalies if a["peer"]})
     ev = {"records": len(records), "window_s": window_s, "action": action,
-          "blocked_peers": report.blocked_peers, "rate_limited": report.rate_limited,
-          "anomalies": anomalies, "compute_ms": _ms(t0)}
-    if report.status == "normal" and not extra_anomalies:
+          "blocked_peers": blocked, "rate_limited": report.rate_limited,
+          "anomalies": anomalies, "learned": learned_ev, "compute_ms": _ms(t0)}
+    if report.status == "normal" and not extra_anomalies and not learned_anomalies:
+        lb = learned_ev.get("learned_baseline", {})
+        note = " and its learned baseline" if lb.get("anomalous") is False else ""
         return CheckResult("behavior", "pass",
-                           f"{len(records)} observed messages and flows match the charger baseline.", ev)
+                           f"{len(records)} observed messages and flows match the charger baseline{note}.", ev)
     rules = sorted({a["rule"] for a in anomalies})
     return CheckResult("behavior", "fail", f"Anomalous behaviour: {', '.join(rules)}.", ev)
 

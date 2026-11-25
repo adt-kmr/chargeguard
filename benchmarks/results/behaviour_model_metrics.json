@@ -1,0 +1,89 @@
+{
+  "window_s": 10.0,
+  "threshold": 0.6623442769050598,
+  "train": {
+    "threshold": 0.6623442783951765,
+    "known_ports": [
+      53,
+      123,
+      443,
+      9000
+    ],
+    "window_s": 10.0,
+    "train_windows": 6113,
+    "threshold_windows": 1079,
+    "threshold_rule": "0.999 quantile x 1.25",
+    "healthy_validation_max": 0.7220016717910767
+  },
+  "healthy_test": {
+    "windows": 1796,
+    "false_alarms": 0,
+    "false_alarm_rate": 0.0,
+    "rules_false_alarms": 20
+  },
+  "attacks": {
+    "port_scan": {
+      "novel": false,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "number of destination ports (higher)"
+    },
+    "c2_beacon": {
+      "novel": false,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "regular, beacon-like timing (higher)"
+    },
+    "dns_tunnel": {
+      "novel": false,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "connection rate (higher)"
+    },
+    "ocpp_flood": {
+      "novel": false,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 0.0,
+      "top_reason": "OCPP packet rate (higher)"
+    },
+    "slow_scan": {
+      "novel": true,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "number of destination ports (higher)"
+    },
+    "slow_dns_tunnel": {
+      "novel": true,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 0.0,
+      "top_reason": "regular, beacon-like timing (higher)"
+    },
+    "https_exfil": {
+      "novel": true,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "upload/download ratio (higher)"
+    },
+    "ssh_bruteforce": {
+      "novel": true,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "download rate (higher)"
+    },
+    "unexpected_service": {
+      "novel": true,
+      "windows": 40,
+      "model_detection": 1.0,
+      "rules_detection": 1.0,
+      "top_reason": "regular, beacon-like timing (higher)"
+    }
+  }
+}

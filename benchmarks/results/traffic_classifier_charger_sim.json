@@ -1,0 +1,102 @@
+{
+  "note": "synthetic charger traffic built as real packets and aggregated by netflow.FlowTable",
+  "threshold": 0.9696961641311646,
+  "healthy": {
+    "flows": 632,
+    "flagged": 2,
+    "false_positive_rate": 0.0032,
+    "max_score": 0.9963
+  },
+  "port_scan": {
+    "flows": 100,
+    "flagged": 1,
+    "detection_rate": 0.01,
+    "max_score": 0.997,
+    "why_top": [
+      {
+        "feature": "dport_smb_rpc",
+        "meaning": "destination port class 'smb rpc'",
+        "weight": 7.207
+      },
+      {
+        "feature": "log_in_pkts",
+        "meaning": "packets sent",
+        "weight": 4.807
+      },
+      {
+        "feature": "log_in_bytes",
+        "meaning": "bytes sent",
+        "weight": 3.591
+      }
+    ]
+  },
+  "c2_beacon": {
+    "flows": 30,
+    "flagged": 0,
+    "detection_rate": 0.0,
+    "max_score": 0.7562,
+    "why_top": [
+      {
+        "feature": "log_in_pkts",
+        "meaning": "packets sent",
+        "weight": 0.657
+      },
+      {
+        "feature": "log_out_pkts",
+        "meaning": "packets received",
+        "weight": 0.574
+      },
+      {
+        "feature": "log_out_in_byte_ratio",
+        "meaning": "reply/request byte ratio",
+        "weight": 0.536
+      }
+    ]
+  },
+  "dns_tunnel": {
+    "flows": 300,
+    "flagged": 0,
+    "detection_rate": 0.0,
+    "max_score": 0.4853,
+    "why_top": [
+      {
+        "feature": "log_in_bytes",
+        "meaning": "bytes sent",
+        "weight": 3.905
+      },
+      {
+        "feature": "log_out_pkts",
+        "meaning": "packets received",
+        "weight": 3.327
+      },
+      {
+        "feature": "proto_udp",
+        "meaning": "protocol UDP",
+        "weight": 2.637
+      }
+    ]
+  },
+  "ocpp_flood": {
+    "flows": 10,
+    "flagged": 0,
+    "detection_rate": 0.0,
+    "max_score": 0.0,
+    "why_top": [
+      {
+        "feature": "log_out_in_pkt_ratio",
+        "meaning": "reply/request packet ratio",
+        "weight": 2.53
+      },
+      {
+        "feature": "log_duration_ms",
+        "meaning": "flow duration",
+        "weight": 1.251
+      },
+      {
+        "feature": "log_in_bytes",
+        "meaning": "bytes sent",
+        "weight": 0.667
+      }
+    ]
+  }
+}

@@ -5,6 +5,11 @@ Download the public datasets used to train ChargeGuard's threat detectors.
              https://archive.ics.uci.edu/dataset/228/sms+spam+collection
   phiusiil   UCI PhiUSIIL Phishing URL Dataset (235,795 URLs)                CC BY 4.0
              https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+dataset
+  nf_unsw_nb15     NF-UNSW-NB15, NetFlow v1 (8 basic NetFlow features)       academic use with citation
+  nf_unsw_nb15_v2  NF-UNSW-NB15-v2, NetFlow v2 (43 extended features)        academic use with citation
+             University of Queensland, https://staff.itee.uq.edu.au/marius/NIDS_datasets/
+             Sarhan, Layeghy, Moustafa, Portmann (2021); Sarhan, Layeghy, Portmann (2022).
+             Commercial use needs the authors' agreement.
 
 Files land in data/raw/<name>/ (git-ignored). SHA-256 of every downloaded
 archive is written to data/raw/<name>/SHA256 and printed, and compared with
@@ -29,15 +34,30 @@ CHECKSUMS = ROOT / "data" / "checksums.json"
 DATASETS = {
     "sms_spam": "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip",
     "phiusiil": "https://archive.ics.uci.edu/static/public/967/phiusiil+phishing+url+dataset.zip",
+    # UQ research data manager: the API returns a short-lived signed URL for open-access files
+    "nf_unsw_nb15": "uqrdm:c31a9f50-ef99-11ed-ab7b-c7846b13c8a9",
+    "nf_unsw_nb15_v2": "uqrdm:8c6e2a00-ef9c-11ed-827d-e762de186848",
 }
+UA = {"User-Agent": "chargeguard-dataset-fetch/1.0"}
+
+
+def resolve(url: str) -> str:
+    if not url.startswith("uqrdm:"):
+        return url
+    api = f"https://api.rdm.uq.edu.au/datasets/{url.split(':', 1)[1]}/download"
+    with urllib.request.urlopen(urllib.request.Request(api, headers=UA), timeout=60) as r:
+        info = json.loads(r.read())
+    if not info.get("canDownload") or info.get("accessType") != "OPEN":
+        raise RuntimeError(f"dataset is not open for download: {info.get('accessType')}")
+    return info["url"]
 
 
 def fetch(name: str) -> str:
-    url = DATASETS[name]
+    url = resolve(DATASETS[name])
     out = RAW / name
     out.mkdir(parents=True, exist_ok=True)
     archive = out / "archive.zip"
-    req = urllib.request.Request(url, headers={"User-Agent": "chargeguard-dataset-fetch/1.0"})
+    req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=300) as r, open(archive, "wb") as f:
         while chunk := r.read(1 << 20):
             f.write(chunk)
